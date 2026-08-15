@@ -43,8 +43,18 @@ const DEEPSEEK_HARNESS_TOOLCHAIN_SPEC = {
     version: '22.23.2',
     // The build image is the interpreter's provenance: its Node is copied into
     // the toolchain rather than downloaded separately.
-    image: 'node:22-bookworm',
-    imageDigest: 'sha256:0557ac14e0d45d02ed563067b82856ca5e7aa3437fa28d98d4350ea9c3d9494a',
+    //
+    // Bullseye and not bookworm, because this image also fixes the oldest task
+    // image the toolchain can run in. A native module links against the glibc
+    // it was compiled on and refuses to load on anything older, and the
+    // bookworm build produced a `pty.node` that required GLIBC_2.34: every
+    // Terminal-Bench task built on `debian:bullseye-slim` (glibc 2.31) failed
+    // at boot with `Failed to load native module: pty.node`, for every arm, in
+    // a whole cohort. Bullseye is the oldest base Node 22 publishes an image
+    // for, it carries the same 22.23.2 interpreter, and a module built there
+    // loads on every newer task image too.
+    image: 'node:22-bullseye',
+    imageDigest: 'sha256:b7d7b6e2932d5413a2c0f35a9a8d9cf4e8476a86f5cadb56405de2fcc72676f4',
   },
   deepseekHarness: {
     package: '@deepseek-ai/dsh',

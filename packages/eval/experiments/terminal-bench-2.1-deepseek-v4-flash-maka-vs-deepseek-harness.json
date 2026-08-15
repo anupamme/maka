@@ -101,6 +101,7 @@
           "--profile",
           "maka-eval",
           "--",
+          "--",
           "{{task.input}}"
         ]
       }

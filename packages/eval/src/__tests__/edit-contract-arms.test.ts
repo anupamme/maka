@@ -385,4 +385,28 @@ test('the experiment runs the three arms against one another', async () => {
       `${subject.id} is launched differently from ${first.id}`,
     );
   }
+
+  // Two `--`, not one. The harness parses its own command line with commander
+  // and forwards what follows the first separator to the app the profile boots,
+  // which parses it again — and the second parse has no separator left. A task
+  // whose instruction begins with `-` is read there as an option, and the arm
+  // exits with `error: unknown option` before it reaches the model. One task in
+  // this suite starts with a Markdown bullet and cost all three arms that way.
+  //
+  // The second separator is not otherwise observable: with a task that does not
+  // begin with `-`, the request this harness puts on the wire is byte-identical
+  // either way.
+  for (const subject of experiment.subjects) {
+    const separators = subject.config.args.filter((argument) => argument === '--');
+    assert.equal(
+      separators.length,
+      2,
+      `${subject.id} passes ${separators.length} argument separators, so a task whose instruction begins with "-" is parsed as an option`,
+    );
+    assert.equal(
+      subject.config.args.at(-2),
+      '--',
+      `${subject.id} does not separate the task instruction from its own arguments`,
+    );
+  }
 });

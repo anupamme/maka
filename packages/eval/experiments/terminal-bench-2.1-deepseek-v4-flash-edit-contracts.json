@@ -82,6 +82,7 @@
           "--profile",
           "maka-eval",
           "--",
+          "--",
           "{{task.input}}"
         ]
       }
@@ -105,6 +106,7 @@
           "--profile",
           "maka-eval",
           "--",
+          "--",
           "{{task.input}}"
         ]
       }
@@ -127,6 +129,7 @@
           "/opt/maka-deepseek-harness-toolchain/lib/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js",
           "--profile",
           "maka-eval",
+          "--",
           "--",
           "{{task.input}}"
         ]
