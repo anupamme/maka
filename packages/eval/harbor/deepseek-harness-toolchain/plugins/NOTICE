@@ -8,10 +8,12 @@ description travels with the code.
 --------------------------------------------------------------------------------
 tool-apply-patch/upstream-apply-patch-instructions.md
                                        — verbatim copy: the model-facing text
-tool-apply-patch/__tests__/upstream/   — verbatim copy: the scenario suite
+tool-apply-patch/__tests__/upstream/scenarios/
+                                       — verbatim copy: the scenario suite
 tool-apply-patch/index.mjs             — verifying, applying and reporting
 tool-apply-patch/parse-patch.mjs       — the envelope and hunk parser
 tool-apply-patch/codex-apply.mjs       — locating and applying a file's hunks
+tool-apply-patch/rust-trim.mjs         — Rust's `str::trim` charset
 tool-apply-patch/__tests__/codex-fixtures.json
                                        — recorded output of the `codex` binary
 
@@ -60,12 +62,21 @@ tool-apply-patch/__tests__/codex-fixtures.json
   rather than copying it.
 
   This is not the description upstream registers. At the ported commit
-  `create_apply_patch_freeform_tool` registers a 105-character description plus
+  `create_apply_patch_freeform_tool` registers a 108-character description plus
   codex-rs/core/src/tools/handlers/apply_patch.lark as a grammar the decoder is
   constrained to; the harness this plugin mounts into registers JSON function
   tools and has no grammar seam, so the arm uses upstream's own text for a model
   reached without a grammar. Every operation the grammar defines is implemented,
   so nothing in the text describes something the tool refuses.
+
+  Nor is the copied file live at that commit. prompt_with_apply_patch_instructions.md
+  is referenced only from codex-rs/core/src/session/tests.rs, whose four model
+  cases all declare `expects_apply_patch_description: false`, so the assertion
+  comparing instructions against it never runs; model instructions come from
+  codex-rs/models-manager/models.json, and none of its eight templates carries
+  the section. It is upstream's own authored description of the format, and it
+  is retired. That is why it is named precisely here rather than described as
+  what Codex sends.
 
   parse-patch.mjs and codex-apply.mjs are ports of the functions below: the same
   algorithms in JavaScript, following their structure and their branch order
@@ -77,7 +88,9 @@ tool-apply-patch/__tests__/codex-fixtures.json
       codex-rs/apply-patch/src/streaming_parser.rs   (`process_line`)
       codex-rs/apply-patch/src/parser.rs             (markers, `push_context_line`,
                                                       `check_patch_boundaries_lenient`)
-      codex-rs/apply-patch/src/seek_sequence.rs      (`seek_sequence`)
+      codex-rs/apply-patch/src/seek_sequence.rs      (`seek_sequence`, and the
+                                                      `str::trim` charset
+                                                      rust-trim.mjs spells out)
       codex-rs/apply-patch/src/file_update.rs        (`derive_new_contents_from_chunks`,
                                                       `compute_replacements`,
                                                       `apply_replacements`)
@@ -102,13 +115,18 @@ tool-apply-patch/__tests__/codex-fixtures.json
 
   as a comment, for the reader; that is a transcription, not a copy of the file.
 
-  __tests__/upstream/ is a verbatim copy of
+  __tests__/upstream/scenarios/ is a verbatim copy of
   codex-rs/apply-patch/tests/fixtures/scenarios at commit
   a7edf37cb46b5fc4d50bd03df8e5999a86f602eb — 25 scenario directories, their
   README and their .gitattributes, unmodified. Upstream publishes them as a
   conformance suite "meant to be easily portable to other languages or
   platforms"; upstream-scenarios.test.mjs is that port. It is test material and
-  the toolchain build excludes it, as it excludes every `__tests__` directory.
+  the toolchain build excludes it, as it excludes every `__tests__` directory
+  under the plugins it copies — the prune is scoped to /out/lib/dsh/plugins, so
+  it says nothing about node_modules, which is copied whole.
+
+  A second, byte-identical copy of the same 27 entries sat at __tests__/upstream/
+  itself, 82 files that nothing read. It has been removed.
 
   __tests__/codex-fixtures.json is generated output, not source: codex-oracle.mjs runs the
   released `codex` binary over a temporary tree for each case and records what
@@ -117,12 +135,18 @@ tool-apply-patch/__tests__/codex-fixtures.json
   PATH and is not part of the build or the test run.
 
   The recorded run used codex-cli 0.147.0, whose apply-patch sources sit at tag
-  rust-v0.147.0 rather than at the commit ported above. The two differ in these
-  files by a refactor — `UpdateFileChunk::default`, `push_context_line`, and the
-  `context_line_indices` field — plus one behavioural change in
-  `seek_sequence`'s end-of-file start position that applies to
-  `PreserveLineEndings` only. Under `NormalizeToLf` they are the same
-  algorithms, which is why the fixtures and the port agree on every case.
+  rust-v0.147.0 rather than at the commit ported above, and the gap is wider
+  than an earlier revision of this notice said. `apply-patch/src/file_update.rs`
+  does not exist at 0.147.0 at all — `derive_new_contents_from_chunks` and its
+  neighbours live in lib.rs — so the restructure covers more than the
+  `UpdateFileChunk::default`, `push_context_line` and `context_line_indices`
+  items named before. Two behavioural differences, not one: `seek_sequence`'s
+  end-of-file start position, which applies to `PreserveLineEndings` only, and
+  the duplicate-path check in `try_verify_apply_patch_args`, which does not
+  exist at 0.147.0 — which is precisely why the binary composes an envelope
+  naming one path twice where this tool refuses it. Under `NormalizeToLf` the
+  hunk algorithms are the same, which is why the fixtures and the port agree on
+  every case but the ones codex-fixtures.test.mjs names as divergences.
 
   An earlier version of this file said the description also dropped
   `*** Delete File:` and `*** Move to:` and their grammar productions. That was
