@@ -5089,68 +5089,6 @@ describe('SessionManager permission mode updates', () => {
     expect(modeNote.data).toEqual({ from: 'explore', to: 'ask' });
   });
 
-  test('backend configuration updates rebuild an already-active backend', async () => {
-    const store = new MemorySessionStore();
-    const backends = new BackendRegistry();
-    const built: string[] = [];
-    backends.register('fake', (ctx) => {
-      built.push(
-        `${ctx.header.backend}:${ctx.header.llmConnectionSlug}:${ctx.header.model}:${ctx.header.cwd}`,
-      );
-      return new TestBackend(ctx);
-    });
-    backends.register('ai-sdk', (ctx) => {
-      built.push(
-        `${ctx.header.backend}:${ctx.header.llmConnectionSlug}:${ctx.header.model}:${ctx.header.cwd}`,
-      );
-      return new TestBackend(ctx);
-    });
-    const manager = new SessionManager({ store, backends, newId: nextId(), now: nextNow(5_000) });
-    const session = await manager.createSession(makeInput());
-
-    await drain(manager.sendMessage(session.id, { turnId: 'turn-1', text: 'hello' }));
-    expect(built).toEqual(['fake:fake:fake-model:/tmp/cwd']);
-
-    const summary = await manager.updateSession(session.id, {
-      backend: 'ai-sdk',
-      llmConnectionSlug: 'zai-coding-plan',
-      model: 'glm-4.7',
-      cwd: '/tmp/worktree-cwd',
-    });
-    expect(summary.backend).toBe('ai-sdk');
-    expect(summary.llmConnectionSlug).toBe('zai-coding-plan');
-    expect(summary.cwd).toBe('/tmp/worktree-cwd');
-    expect(store.disposeCount).toBe(1);
-
-    await drain(manager.sendMessage(session.id, { turnId: 'turn-2', text: 'again' }));
-    expect(built).toEqual([
-      'fake:fake:fake-model:/tmp/cwd',
-      'ai-sdk:zai-coding-plan:glm-4.7:/tmp/worktree-cwd',
-    ]);
-  });
-
-  test('rejects execution configuration updates for archived sessions', async () => {
-    const store = new MemorySessionStore();
-    const manager = new SessionManager({
-      store,
-      backends: new BackendRegistry(),
-      newId: nextId(),
-      now: nextNow(5_500),
-    });
-    const session = await manager.createSession(makeInput());
-    await store.updateHeader(session.id, { isArchived: true });
-
-    await assert.rejects(
-      manager.updateSession(session.id, { model: 'replacement-model' }),
-      (error: unknown) => {
-        assert.ok(error instanceof SessionConfigurationTransitionError);
-        assert.equal(error.code, 'operation_conflict');
-        return true;
-      },
-    );
-    assert.equal((await store.readHeader(session.id)).model, session.model);
-  });
-
   test('starts a new turn without workspace identity when safety inspection fails', async () => {
     const store = new MemorySessionStore();
     const runStore = new MemoryAgentRunStore();
@@ -11801,37 +11739,6 @@ describe('SessionManager permission mode updates', () => {
       maxBytes: 1024,
     });
     expect(output.budget.projectedBytes <= output.budget.maxBytes).toBe(true);
-  });
-
-  test('rejects backend configuration updates while a turn is actively streaming', async () => {
-    const store = new MemorySessionStore();
-    const backends = new BackendRegistry();
-    const gate = makeGate();
-    backends.register('fake', (ctx) => new TestBackend(ctx, gate));
-    const manager = new SessionManager({ store, backends, newId: nextId(), now: nextNow(7_000) });
-    const session = await manager.createSession(makeInput());
-
-    const iterator = manager
-      .sendMessage(session.id, { turnId: 'turn-1', text: 'hello' })
-      [Symbol.asyncIterator]();
-    await iterator.next();
-
-    await expectRejects(
-      manager.updateSession(session.id, {
-        backend: 'ai-sdk',
-        llmConnectionSlug: 'zai-coding-plan',
-        model: 'glm-4.7',
-        cwd: '/tmp/worktree-cwd',
-      }),
-      /Cannot change backend configuration while a turn is running/,
-    );
-    const header = await store.readHeader(session.id);
-    expect(header.backend).toBe('fake');
-    expect(header.llmConnectionSlug).toBe('fake');
-
-    gate.release();
-    await iterator.next();
-    await iterator.next();
   });
 
   test('backend build failure after user append writes a failed terminal run fact', async () => {

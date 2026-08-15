@@ -1566,46 +1566,6 @@ export class SessionManager {
     return [...recovered];
   }
 
-  async updateSession(sessionId: string, patch: SessionHeaderPatch): Promise<SessionSummary> {
-    if (changesSessionExecutionConfiguration(patch)) {
-      const current = await this.deps.store.readHeader(sessionId);
-      if (current.isArchived) {
-        throw new SessionConfigurationTransitionError(
-          'operation_conflict',
-          'Archived Session configuration cannot be changed',
-        );
-      }
-    }
-    const backendConfigChanged = changesBackendConfig(patch);
-    if (backendConfigChanged && this.runtimeKernel.hasActiveRuns(sessionId)) {
-      throw new Error('Cannot change backend configuration while a turn is running');
-    }
-
-    const { permissionMode, name, titleIsManual: _titleIsManual, ...rest } = patch;
-    const permissionSummary =
-      permissionMode === undefined
-        ? undefined
-        : await this.setPermissionMode(sessionId, permissionMode);
-    if (name === undefined && Object.keys(rest).length === 0) {
-      return permissionSummary ?? headerToSummary(await this.deps.store.readHeader(sessionId));
-    }
-
-    if (name !== undefined) await this.deps.store.rename(sessionId, name);
-    const next =
-      Object.keys(rest).length > 0
-        ? await this.deps.store.updateHeader(sessionId, rest)
-        : await this.deps.store.readHeader(sessionId);
-    this.runtimeKernel.updateCachedHeader(sessionId, next);
-    if (changesBackendConfig(rest)) {
-      // AgentBackend instances snapshot backend/model config at construction
-      // time. If a stale session is rebound to a real default connection, the
-      // next turn must build a fresh backend instead of reusing FakeBackend or
-      // an AiSdkBackend pointed at a deleted connection.
-      await this.runtimeKernel.disposeBackend(sessionId);
-    }
-    return headerToSummary(next);
-  }
-
   async setSessionStatus(
     sessionId: string,
     status: SessionStatus,
@@ -6442,37 +6402,6 @@ function claimedAgentGraphIntentResult(
     operatorId: claim.targetOperatorId,
     ...result,
   };
-}
-
-export function changesBackendConfig(patch: SessionHeaderPatch): boolean {
-  return (
-    'backend' in patch ||
-    'llmConnectionSlug' in patch ||
-    'model' in patch ||
-    'thinkingLevel' in patch ||
-    'cwd' in patch ||
-    'collaborationMode' in patch ||
-    // AiSdkBackend snapshots the header at construction and ToolRuntime
-    // reads `header.permissionMode` at every decision, so a mode change
-    // that does not rebuild the backend is persisted but NOT enforced —
-    // the live session keeps deciding with the old mode.
-    //
-    // `setPermissionMode` disposes the backend for exactly this reason.
-    // `updateSession` did not, so every other path that lowers a mode was
-    // advisory: notably the bot-incoming guard re-pinning a conversation
-    // to `explore`, which left an already-built `execute`/`bypass` backend
-    // serving the remote sender.
-    'permissionMode' in patch
-  );
-}
-
-function changesSessionExecutionConfiguration(patch: SessionHeaderPatch): boolean {
-  return (
-    changesBackendConfig(patch) ||
-    'connectionLocked' in patch ||
-    'orchestrationMode' in patch ||
-    'projectId' in patch
-  );
 }
 
 function executionBoundaryMatchesPermissionMode(
