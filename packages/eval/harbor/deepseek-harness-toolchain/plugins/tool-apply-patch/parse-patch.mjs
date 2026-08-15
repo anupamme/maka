@@ -196,7 +196,14 @@ function updateFile(body, path) {
     }
 
     if (line === EOF_MARKER) {
-      if (chunks.length === 0 || blank(chunks.at(-1))) {
+      // Upstream guards with `chunks.last().is_some_and(blank)`, which is false
+      // when there is no chunk at all — so a marker before the first `@@` is
+      // ignored rather than rejected, and `chunks.last_mut()` is simply `None`
+      // (`streaming_parser.rs:291-304`). Refusing it here rejected an envelope
+      // the reference applies. A section that never gets a chunk is still
+      // refused, by the emptiness check at the end of the section.
+      if (chunks.length === 0) continue;
+      if (blank(chunks.at(-1))) {
         throw new SyntaxError('update hunk does not contain any lines');
       }
       chunks.at(-1).isEndOfFile = true;

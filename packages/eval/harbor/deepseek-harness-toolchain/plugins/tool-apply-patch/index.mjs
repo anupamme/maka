@@ -32,9 +32,13 @@
 //
 // The narrow exception is a provider that confines. `processPath` would then be
 // the one way around the sandbox, so both operations refuse up front rather
-// than escape quietly. The Eval arm mounts `dsh-sandbox-local` at
-// `danger-full-access`, where nothing is confined and the model's own bash can
-// already remove any file, so the refusal never fires there.
+// than escape quietly. The refusal does not fire in the Eval arm, and the
+// reason is the provider rather than the mode: the guard is
+// `ctx.fs.sandboxMode !== undefined`, and `dsh-fs-local` never sets it — it
+// inherits `dsh-fs`'s `get sandboxMode() {}`, which is `undefined` at every
+// sandbox mode. So the refusal is dead code under this mount at
+// `danger-full-access` and would stay dead at `workspace-write`; it exists for
+// a provider that confines at the filesystem, which no arm mounts.
 
 import { readFile, rm } from 'node:fs/promises';
 import z from '@deepseek-ai/schemastery';
@@ -67,15 +71,21 @@ import { parsePatch } from './parse-patch.mjs';
 // 108 characters and no grammar at all, which is not Codex's contract minus a
 // feature but a different and much weaker one.
 //
-// What that file is not, at this commit: live. `prompt_with_apply_patch_instructions.md`
-// is referenced only from `core/src/session/tests.rs:1443`, whose four model
-// cases all declare `expects_apply_patch_description: false`, so the assertion
-// never runs; instructions come from `models-manager/models.json`, and none of
-// its eight templates carries the section. Upstream now conveys the format
-// through the grammar and says only "Use `apply_patch` for local file edits."
-// So no shipped Codex configuration is the one this arm is in, and the choice
-// is between upstream's own retired prose and prose written here. It is the
-// former, unedited but for the three substitutions above.
+// What that file is not, at this commit: delivered. It is referenced only from
+// `core/src/session/tests.rs:1443`, whose four model cases all declare
+// `expects_apply_patch_description: false`, so the assertion never runs.
+// Instructions come from `models-manager/models.json`, and seven of its eight
+// templates carry no `## apply_patch` section at all — they say some form of
+// "Use `apply_patch` for local file edits" and leave the format to the grammar.
+// The eighth, `gpt-5.2`, does carry a `## apply_patch` section: shorter than
+// this file, same envelope, same three headers, same worked example. So the
+// format is still taught in prose somewhere upstream, and this file is the
+// fuller version of that prose rather than something upstream abandoned.
+//
+// Either way no shipped configuration is the one this arm is in — `gpt-5.2`
+// gets the prose *and* the grammar — so the choice was between upstream's own
+// text and text written here. It is the former, unedited but for the three
+// substitutions above.
 //
 // That leaves the tool shape as the one deviation this arm cannot remove, and
 // it is stated as such in ../../../../README.md rather than papered over.
@@ -143,8 +153,11 @@ class MutationPolicy {
 
   requireDirectFilesystem(what) {
     if (this.confines) {
-      throw new Error(
-        `tool-apply-patch: ${what} is unavailable under a confining filesystem provider`,
+      // An `FsError` like every other refusal this tool can produce, so the
+      // model sees one vocabulary and a caller can route on `code`.
+      throw new FsError(
+        `${what} is unavailable under a confining filesystem provider`,
+        'FS_SANDBOX_DENIED',
       );
     }
   }
@@ -230,7 +243,7 @@ async function verifyOperations(ctx, policy, operations, options, exec) {
     claimed.add(key);
 
     // Upstream's verify pass does nothing at all for `*** Add File:` — it
-    // records the new contents and moves on (`invocation.rs:246-248`). It does
+    // records the new contents and moves on (`invocation.rs:243-245`). It does
     // not stat the path and it does not read it, so neither does this. An
     // earlier version stated the path here and emitted `fs/observed {present}`
     // from the result, which told the rest of the harness the file had been
@@ -261,7 +274,7 @@ async function verifyOperations(ctx, policy, operations, options, exec) {
     //
     // The read is also what makes the observation below true: a stat
     // establishes that something is present, not that this tool has seen it.
-    const before = await ctx.fs.readText(target, exec.signal);
+    const before = await readSourceText(ctx, target, exec.signal);
     ctx.emit('fs/observed', target, observed(info), exec);
     if (deleting) continue;
 
@@ -318,7 +331,7 @@ async function applySequentially(ctx, policy, operations, run) {
       continue;
     }
 
-    const content = deriveOrThrow(await ctx.fs.readText(target, exec.signal), operation);
+    const content = deriveOrThrow(await readSourceText(ctx, target, exec.signal), operation);
     if (operation.movePath === undefined) {
       await writeTarget(ctx, policy, { target, content, info }, run);
       affected.M.push(operation.path);
@@ -356,6 +369,41 @@ async function applySequentially(ctx, policy, operations, run) {
   ].join('\n');
 }
 
+// Reading a file the way Codex reads it, which is not the way `ctx.fs.readText`
+// does.
+//
+// Upstream is `read_file_text` = `read_file` + `String::from_utf8`
+// (`file-system/src/lib.rs:434-443`): every byte sequence that is valid UTF-8
+// is text, and nothing else is. `dsh-fs-local.readWholeText` adds two rules of
+// its own on top of that, and both are model-visible here. It rejects any NUL
+// in the first 8192 bytes as a binary file, so a source file with an embedded
+// NUL — which is valid UTF-8 — refused an envelope the reference applies, and
+// after the verify pass started reading delete targets that took a `*** Delete
+// File:` with it. And it decodes with `ignoreBOM` left at its default of false,
+// which strips a leading byte-order mark, so a patch whose context omits the
+// mark applied here, was refused by the reference, and wrote the file back with
+// the mark gone.
+//
+// `readBytes` is the seam without those rules — `dsh-fs` documents it as "raw
+// bytes with no decoding or binary rejection" — so the decode happens here and
+// says exactly what `String::from_utf8` says. Its byte cap is required rather
+// than chosen: `Number.MAX_SAFE_INTEGER` is the largest value the provider's
+// own `createReadStream({end})` accepts, so it can never bind, and the real
+// ceiling stays the one V8 already imposes on a string.
+const EXACT = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+const NO_BYTE_CAP = Number.MAX_SAFE_INTEGER;
+
+async function readSourceText(ctx, target, signal) {
+  const bytes = await ctx.fs.readBytes(target, signal, NO_BYTE_CAP);
+  try {
+    return EXACT.decode(bytes);
+  } catch (cause) {
+    throw new FsError(`cannot read ${target.displayPath}: not valid UTF-8`, 'FS_NOT_TEXT', {
+      cause,
+    });
+  }
+}
+
 // `deriveNewContents` reports a context miss as a plain Error; the harness
 // vocabulary for "the lines you named are not in the file" is `FS_EDIT_NOT_FOUND`
 // and only that failure is rewrapped, so a bug in the applier still surfaces as
@@ -390,7 +438,7 @@ async function writeTarget(ctx, policy, { target, content, info, unconditional }
 
 // The two waterfalls do not return the same shape. `fs/write-intent` yields an
 // `FsWriteIntent`, guard and all; `fs/edit-intent` yields `{version}` and no
-// `kind` (`dsh-fs/lib/types/index.d.ts:36-42`), so passing it straight to
+// `kind` (`dsh-fs/lib/types/index.d.ts:28` and `:36-42`), so passing it straight to
 // `writeText` matched neither guard and wrote unconditionally — a decider's
 // version check was accepted and then dropped on the floor.
 async function resolveIntent(ctx, target, info, exec) {

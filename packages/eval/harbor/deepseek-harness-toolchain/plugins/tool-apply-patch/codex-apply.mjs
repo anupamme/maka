@@ -47,8 +47,11 @@ export function seekSequence(lines, pattern, start, eof) {
   // otherwise read past the end.
   if (pattern.length > lines.length) return undefined;
 
-  // `is_end_of_file` means the hunk claimed to sit at the end, so the search
-  // starts there and falls back to a full scan through the passes below.
+  // `is_end_of_file` means the hunk claimed to sit at the end, so every pass
+  // starts there instead of at `start`. There is no fallback to `start`:
+  // upstream uses `eof_start`, not `eof_start.max(start)`, under
+  // `NormalizeToLf`, so a hunk that claims the end and is not there is refused
+  // rather than found earlier in the file.
   const searchStart = eof && lines.length >= pattern.length ? lines.length - pattern.length : start;
   const last = lines.length - pattern.length;
 

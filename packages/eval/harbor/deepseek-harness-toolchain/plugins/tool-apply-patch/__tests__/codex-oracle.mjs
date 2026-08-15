@@ -518,6 +518,74 @@ export const cases = [
     files: { 'f.txt': 'gamma\u0085\ndelta\n' },
     patch: P('*** Update File: f.txt', '@@', '-gamma', '+GAMMA'),
   },
+  // `read_file_text` is `read_file` + `String::from_utf8`, so a NUL byte is
+  // text: it is valid UTF-8 and the reference patches and deletes straight
+  // through it. The provider's `readText` calls it a binary file, which is why
+  // this tool reads bytes and decodes them itself.
+  {
+    name: 'a NUL byte in the file being updated',
+    files: { 'a.txt': 'header\u0000tail\nsecond\n' },
+    patch: P('*** Update File: a.txt', '@@', '-second', '+SECOND'),
+  },
+  {
+    name: 'a NUL byte in the file being deleted',
+    files: { 'a.txt': 'header\u0000tail\n', 'b.txt': 'keep\n' },
+    patch: P('*** Delete File: a.txt'),
+  },
+  {
+    name: 'invalid UTF-8 in the file being updated',
+    files: { 'a.txt': '\udcff\udcfe\nsecond\n' },
+    patch: P('*** Update File: a.txt', '@@', '-second', '+SECOND'),
+  },
+  // Eight shapes that separate this port from a plausible variant of itself.
+  // Each was found by mutating the port until the suite stayed green, then
+  // running the mutant and the reference on the same input; every one of them
+  // is a place where a reading of the Rust could have gone either way.
+  {
+    name: 'a second chunk overlapping where the first one ended',
+    files: { 'a.txt': 'one\ntwo\nthree\n' },
+    patch: P('*** Update File: a.txt', '@@', '-one', '-two', '+X', '@@', '-two', '+Y'),
+  },
+  {
+    name: 'an @@ anchor that appears before the previous chunk',
+    files: { 'a.txt': 'A\nx\nB\ny\n' },
+    patch: P('*** Update File: a.txt', '@@ B', ' y', '@@ A', '-x', '+X'),
+  },
+  {
+    name: 'an indented section header directly after an add hunk body',
+    files: {},
+    patch: P('*** Add File: a.txt', '+body', '   *** Add File: b.txt', '+other'),
+  },
+  {
+    name: 'an End of File marker carrying a trailing U+FEFF',
+    files: { 'a.txt': 'head\ntail\n' },
+    patch: P('*** Update File: a.txt', '@@', ' tail', '+added', '*** End of File\ufeff'),
+  },
+  {
+    name: 'an Add File path with a leading space after the colon',
+    files: {},
+    patch: P('*** Add File:  spaced.txt', '+body'),
+  },
+  {
+    name: 'an Update File path with a leading space after the colon',
+    files: { ' spaced.txt': 'old\n' },
+    patch: P('*** Update File:  spaced.txt', '@@', '-old', '+new'),
+  },
+  {
+    name: 'two Move to lines in one section',
+    files: { 'a.txt': 'body\n' },
+    patch: P('*** Update File: a.txt', '*** Move to: b.txt', '*** Move to: c.txt'),
+  },
+  {
+    name: 'a heredoc whose closing line has trailing text after EOF',
+    files: { 'a.txt': 'old\n' },
+    patch: `<<'EOF'\n${P('*** Update File: a.txt', '@@', '-old', '+new').trimEnd()}\nEOF trailing`,
+  },
+  {
+    name: 'an End of File marker as the first line of an update hunk',
+    files: { 'a.txt': 'a\nb\n' },
+    patch: P('*** Update File: a.txt', '*** End of File', '@@', '-a', '+A'),
+  },
 ];
 
 const run = promisify(execFile);

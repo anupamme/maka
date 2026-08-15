@@ -285,6 +285,9 @@ describe('apply_patch', () => {
       ['fs/observed', 'moved.py', 'present'],
       ['fs/observed', 'app.py', 'absent'],
     ]);
+    // And each of them true when it was published: emitting the source's
+    // `absent` before the unlink leaves the event list identical.
+    assert.deepEqual(mounted.truth, ['present', 'absent', 'present', 'absent']);
   });
 
   it('presents the paths a patch touches', () => {
@@ -428,7 +431,7 @@ describe('apply_patch at the provider seam', () => {
 
   it('refuses the whole envelope when a file it would delete is not text', async () => {
     // Upstream's verify pass reads a delete target — `read_file_text`, which
-    // maps invalid UTF-8 to `InvalidData` (`invocation.rs:249`,
+    // maps invalid UTF-8 to `InvalidData` (`invocation.rs:247`,
     // `file-system/src/lib.rs:434-443`) — so a binary file refuses the envelope
     // before anything is written. Statting it instead applied the delete.
     const mounted = await harness({ files: { 'a.txt': 'a\n' } });
@@ -547,6 +550,157 @@ describe('apply_patch at the provider seam', () => {
         ),
         (error) => error.message === 'multiple operations target a.txt',
       );
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+});
+
+// The seam's remaining surface: what each provider call is handed, what the
+// observation trail publishes, and the one vocabulary a sandbox denial reaches
+// the model in.
+//
+// Every test here was written against a mutation that survived the suite.
+describe('apply_patch seam details', () => {
+  it('consults the create decider and honours what it says', async () => {
+    // `resolveIntent`'s create branch had no coverage at all: replacing the
+    // waterfall with a literal `{kind:'createIfAbsent'}`, and renaming the
+    // event, both left the suite green.
+    const mounted = await harness({
+      files: {},
+      deciders: { 'fs/write-intent': () => ({ kind: 'replaceIfVersion', version: 'nope' }) },
+    });
+    try {
+      await assert.rejects(
+        mounted.run(patch('*** Add File: fresh.txt', '+x')),
+        (error) => error.code === 'FS_STALE_VERSION',
+      );
+      assert.deepEqual(mounted.asked, ['fs/write-intent']);
+      assert.deepEqual(mounted.intents, ['replaceIfVersion']);
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('hands the turn signal to every provider call, not only the writes', async () => {
+    const signal = AbortSignal.timeout(600000);
+    const mounted = await harness({
+      files: { 'a.txt': 'a\n', 'dest.txt': 'x\n' },
+      sandboxMode: undefined,
+      signal,
+    });
+    try {
+      await mounted.run(
+        patch(
+          '*** Add File: new.txt',
+          '+n',
+          '*** Update File: a.txt',
+          '*** Move to: dest.txt',
+          '@@',
+          '-a',
+          '+A',
+        ),
+      );
+      // Both passes, both operations, every verb.
+      assert.deepEqual([...new Set(mounted.calls.map(({ verb }) => verb))].sort(), [
+        'read',
+        'resolve',
+        'stat',
+        'write',
+      ]);
+      assert.ok(mounted.calls.length >= 8, `only ${mounted.calls.length} provider calls`);
+      const unsignalled = mounted.calls.filter((call) => call.signal !== signal);
+      assert.deepEqual(unsignalled, [], 'a provider call did not carry the turn signal');
+      // Three writes, and the move destination's unconditional one is among
+      // them. It is the write a confining provider never reaches, so this is
+      // the only place its signal can be checked.
+      assert.deepEqual(mounted.intents, ['createIfAbsent', 'unconditional']);
+      for (const guard of mounted.guards) assert.equal(guard.signal, signal);
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('carries the sandbox policy into every write', async () => {
+    // The earlier version of this assertion ran a single in-place update, so
+    // `guards.length` was 1 and "every write" was one write.
+    const signal = AbortSignal.timeout(600000);
+    const mounted = await harness({
+      files: { 'a.txt': 'a\n' },
+      sandboxMode: 'danger-full-access',
+      signal,
+    });
+    try {
+      await mounted.run(
+        patch('*** Add File: b.txt', '+b', '*** Update File: a.txt', '@@', '-a', '+A'),
+      );
+      assert.equal(mounted.guards.length, 2);
+      assert.deepEqual(mounted.intents, ['createIfAbsent', 'replaceIfVersion']);
+      for (const guard of mounted.guards) {
+        assert.equal(guard.signal, signal);
+        assert.deepEqual(guard.sandboxPolicy, { mode: 'danger-full-access' });
+      }
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes the version it was given, on both sides of a write', async () => {
+    const mounted = await harness({ files: { 'a.txt': 'a\n' } });
+    try {
+      const summary = await mounted.run(patch('*** Update File: a.txt', '@@', '-a', '+A'));
+      assert.ok(summary.startsWith('Success.'));
+      // Pre-write `present` carries the version the stat returned; post-write
+      // `present` carries the version the write returned; they differ, and
+      // neither is undefined.
+      assert.deepEqual(
+        mounted.events.map(([, path, kind]) => `${path}:${kind}`),
+        ['a.txt:present', 'a.txt:present'],
+      );
+      const [read, published] = mounted.versions;
+      assert.equal(typeof read, 'string');
+      // The published version must be the one `writeText` returned, not merely
+      // a different string from the one that was read.
+      assert.equal(published, mounted.written.at(-1));
+      assert.notEqual(read, published);
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a sandbox denial in the policy vocabulary', async () => {
+    // `MutationPolicy.mapError` is the only thing that speaks to the model
+    // about a denial, and reducing it to `return error` survived the suite.
+    const mounted = await harness({
+      files: {},
+      sandboxMode: 'workspace-write',
+      denyWrites: true,
+    });
+    try {
+      await assert.rejects(mounted.run(patch('*** Add File: a.txt', '+x')), (error) => {
+        assert.equal(error.code, 'FS_SANDBOX_DENIED');
+        assert.match(error.message, /workspace-write/);
+        return true;
+      });
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('announces a removal only after it has happened', async () => {
+    // Emitting the source `absent` before the unlink makes the trail a lie
+    // whenever the unlink then fails, and both orderings passed.
+    const mounted = await harness({ files: { 'a.txt': 'a\n' } });
+    try {
+      await mounted.run(patch('*** Delete File: a.txt'));
+      assert.deepEqual(mounted.events, [
+        ['fs/observed', 'a.txt', 'present'],
+        ['fs/observed', 'a.txt', 'absent'],
+      ]);
+      // Each observation against what the filesystem actually held when it was
+      // published. The event list alone is identical either way round.
+      assert.deepEqual(mounted.truth, ['present', 'absent']);
+      assert.equal(await mounted.exists('a.txt'), false);
     } finally {
       await rm(mounted.root, { recursive: true, force: true });
     }
