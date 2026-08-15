@@ -154,13 +154,20 @@
           * Please avoid commands that may produce a very large amount of output.
           * Please run long lived commands in the background, e.g. 'sleep 10 &' or start a server in the background.
 
-    # Named by absolute path rather than by package: the plugin is installed
-    # into the toolchain, while this composition is copied under $DSH_HOME,
-    # where Node's upward `node_modules` walk never reaches the harness. The
-    # environment variable is set by the Eval subject from the same toolchain
-    # root the identity table pins, so the path has one owner.
+    # Named relative to this file rather than by package: the plugin is
+    # installed into the toolchain, while this composition is copied under
+    # $DSH_HOME, where Node's upward `node_modules` walk never reaches the
+    # harness. `plugins` is a link the Eval subject plants beside this file,
+    # pointing at the toolchain root the identity table pins, so the path has
+    # one owner and does not depend on where that root is mounted.
+    #
+    # A `!!js` expression would be the obvious way to read the path from the
+    # environment instead, and it does not work here: the loader evaluates that
+    # tag for `disabled` alone (`cordis-plugin-loader` `disabledOf`), and hands
+    # `name` the unevaluated node, so the arm fails to boot with
+    # `name.startsWith is not a function` before it reaches the model.
     - id: apply-patch
-      name: !!js process.env.MAKA_EVAL_DSH_PLUGINS + '/tool-apply-patch/index.mjs'
+      name: ./plugins/tool-apply-patch/index.mjs
 
     - id: sessions
       name: '@deepseek-ai/dsh-session-persistence-jsonl'

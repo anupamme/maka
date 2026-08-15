@@ -140,7 +140,10 @@ controls everything else in the cell. What it does hold against is the subject, 
 after the gate has passed. Harbor task
 download and verifier phases retain their native network policy. Build the pinned
 `maka-eval-egress-proxy:12.2.3` image from `harbor/egress-proxy/Dockerfile` before running the
-cohort. `MAKA_EVAL_EGRESS_NAMESPACE_TEST=1 python3 harbor/test_cell_egress_namespace.py` brings up
+cohort. That Dockerfile copies `egress_filter.py` from beside it and `egress-proxy/entrypoint.sh`
+from below it, so its build context is `harbor/` rather than the directory it sits in:
+`docker build -t maka-eval-egress-proxy:12.2.3 -f harbor/egress-proxy/Dockerfile harbor`.
+`MAKA_EVAL_EGRESS_NAMESPACE_TEST=1 python3 harbor/test_cell_egress_namespace.py` brings up
 the overlay and the checked-in policy and asserts that contract in a real cell namespace; it needs
 a Docker daemon and outbound network, and skips otherwise. This URL policy is a blocklist for known
 benchmark and public-solution contamination surfaces, not a complete defense against a deliberately

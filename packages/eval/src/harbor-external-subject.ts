@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, rmSync, statSync } from 'node:fs';
-import { chmod, copyFile, mkdir, rename, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { basename, dirname, join } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -29,9 +29,15 @@ const resultToken = takeRelayResultToken();
 // for profile selection, so the spec repeats this name in `--profile`; the
 // lifecycle test pins the two together.
 const DEEPSEEK_HARNESS_PROFILE = 'maka-eval';
-// The absolute path an Eval-authored plugin row resolves through, named here
-// because the preparer decides whether to export it by looking for it.
-const DSH_PLUGINS_VAR = 'MAKA_EVAL_DSH_PLUGINS';
+// The link inside the profile directory that an Eval-authored plugin row
+// resolves through. A composition copied under $DSH_HOME cannot name such a
+// plugin by package — Node's upward `node_modules` walk from there never
+// reaches the harness — and it cannot name it by absolute path either, because
+// the path depends on the root this wrapper was given. A relative specifier
+// resolved against the profile directory is the one form that is both a plain
+// string and root-independent, so the preparer plants the link and the
+// composition names `./<PLUGIN_LINK>/...`.
+const PLUGIN_LINK = 'plugins';
 
 function isDeepSeekHarness(profile: Profile): boolean {
   return Object.hasOwn(DEEPSEEK_HARNESS_ARMS, profile);
@@ -69,24 +75,32 @@ function deepSeekHarnessArm(profileDirectory: string): (setup: ProfileSetup) => 
     for (const file of ['package.json', 'cordis.yml', 'cordis.patch.yml']) {
       await copyFile(join(source, file), join(profile, file));
     }
-    // Where an Eval-authored plugin row resolves from. A composition copied
-    // under $DSH_HOME cannot name such a plugin by package — Node's upward
-    // `node_modules` walk from there never reaches the harness — so the row
-    // names an absolute path, and this is the one place that path is built.
-    // All three arms run the same toolchain, so its root is read from the arm
-    // whose identity the other two alias.
+    // Where an Eval-authored plugin row resolves from, and the one place that
+    // path is built. All three arms run the same toolchain, so its root is read
+    // from the arm whose identity the other two alias. The link points into the
+    // toolchain rather than copying out of it, so what the loader imports is
+    // still the read-only mounted tree the fingerprint covers.
     //
-    // Exported for all three arms, including the two whose compositions never
-    // read it. An earlier version set it only for a composition that mentions
-    // it, on the reasoning that an unused variable is one more thing a reviewer
-    // has to rule out; that has the causation backwards. The model's own shell
-    // inherits this environment, so setting the variable everywhere is what
-    // makes the three environments identical, and setting it in one arm alone
-    // is what creates a difference the model can read with `env`. It names a
-    // directory and starts nothing, so it is inert where it is unused.
-    env[DSH_PLUGINS_VAR] = rooted(
-      root,
-      `${TOOLCHAIN_IDENTITIES['deepseek-harness'].root}/lib/dsh/plugins`,
+    // Planted for all three arms, including the two whose compositions never
+    // follow it. An earlier version of this reasoning applied to an environment
+    // variable and set it only where a composition mentioned it, on the grounds
+    // that an unused name is one more thing a reviewer has to rule out; that has
+    // the causation backwards, and it applies to a link in $DSH_HOME the same
+    // way. The model's own shell can read both, so planting this everywhere is
+    // what makes the three environments identical, and planting it in one arm
+    // alone is what creates a difference the model can see. It names a directory
+    // and starts nothing, so it is inert where it is unused.
+    //
+    // Removed first because `home` is a fixed path per arm rather than a fresh
+    // directory, and every other step here already tolerates finding its own
+    // output: the `mkdir` is recursive and the copies overwrite. A `symlink`
+    // that alone raised `EEXIST` would turn a second invocation in one
+    // container into a boot failure for this arm and no other.
+    const link = join(profile, PLUGIN_LINK);
+    await rm(link, { force: true });
+    await symlink(
+      rooted(root, `${TOOLCHAIN_IDENTITIES['deepseek-harness'].root}/lib/dsh/plugins`),
+      link,
     );
     env.DEEPSEEK_API_KEY = 'maka-eval-local';
     env.DEEPSEEK_BASE_URL = proxyBaseUrl;

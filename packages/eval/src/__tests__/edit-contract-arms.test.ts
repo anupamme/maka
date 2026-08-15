@@ -58,7 +58,7 @@ const EDIT_CONTRACT_ROWS: Readonly<Record<keyof typeof ARMS, readonly Entry[]>> 
   'deepseek-harness-apply-patch': [
     {
       id: 'apply-patch',
-      name: "!!js process.env.MAKA_EVAL_DSH_PLUGINS + '/tool-apply-patch/index.mjs'",
+      name: './plugins/tool-apply-patch/index.mjs',
     },
   ],
 };
@@ -78,10 +78,23 @@ interface Entry {
 // `!!js` marks an expression the harness evaluates when it loads the file. It
 // is kept as text: the point is to compare what the arms declare, and two arms
 // declaring the same expression is the thing being checked.
+// `!!js` is a real tag in these compositions — the headless runner's
+// `task: !!js ctx.headlessStartup.task` is upstream's own — so the schema has
+// to understand it. What it must not do is flatten it.
+//
+// This file used to construct the tag as the string `!!js <source>`, and the
+// patch arm used it to name its plugin from an environment variable. The
+// harness does not read the tag that way: its loader evaluates `!!js` for
+// `disabled` alone and hands `name` the unevaluated node, so that arm failed to
+// boot on every task while this test stayed green. Constructing it as a string
+// had taught the assertion to accept a form the thing under test cannot load.
+// The marker below is the shape the harness's own loader produces, which is
+// what makes `typeof name === 'string'` below a question about the composition
+// rather than about this schema.
 const SCHEMA = yaml.DEFAULT_SCHEMA.extend([
   new yaml.Type('tag:yaml.org,2002:js', {
     kind: 'scalar',
-    construct: (data: unknown) => `!!js ${String(data)}`,
+    construct: (data: unknown) => ({ __jsExpr: String(data) }),
   }),
 ]);
 
@@ -267,6 +280,34 @@ test('the fs arm cannot be starved by its own per-line cap', async () => {
     config.readMaxLineLength * 3 + marker <= config.readMaxBytes,
     `a truncated line (${config.readMaxLineLength} units) plus its ${marker}-character marker can exceed readMaxBytes (${config.readMaxBytes}), which returns an empty window no offset recovers`,
   );
+});
+
+test('every plugin an arm names by path is one the toolchain ships', async () => {
+  // A row that names a package fails loudly at boot when the package is
+  // missing. A row that names a path fails the same way, but the path is
+  // assembled from three places — this file, the link the subject plants beside
+  // it, and the build that fills the toolchain — and nothing else compares
+  // them. `./plugins/` is that link, so a name under it must correspond to a
+  // file the toolchain build actually produces.
+  const shipped = new URL('../../harbor/deepseek-harness-toolchain/plugins/', import.meta.url);
+  for (const [arm, directory] of Object.entries(ARMS)) {
+    for (const entry of entries(await read(directory, 'cordis.patch.yml'))) {
+      const name = entry.name;
+      assert.ok(
+        typeof name === 'string',
+        `${arm} entry ${entry.id} names ${JSON.stringify(name)}, which the harness passes to its importer unevaluated`,
+      );
+      if (!name.startsWith('./')) continue;
+      assert.ok(
+        name.startsWith('./plugins/'),
+        `${arm} entry ${entry.id} names ${name}, which resolves beside the composition rather than through the planted link`,
+      );
+      await assert.doesNotReject(
+        readFile(new URL(name.slice('./plugins/'.length), shipped)),
+        `${arm} entry ${entry.id} names ${name}, which the toolchain build does not ship`,
+      );
+    }
+  }
 });
 
 test('the arms are pinned to one toolchain identity', async () => {
