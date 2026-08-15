@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, rmSync, statSync } from 'node:fs';
-import { chmod, copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { basename, dirname, join } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -76,18 +76,18 @@ function deepSeekHarnessArm(profileDirectory: string): (setup: ProfileSetup) => 
     // All three arms run the same toolchain, so its root is read from the arm
     // whose identity the other two alias.
     //
-    // Set only for a composition that reads it, which today is the patch arm
-    // alone. Exporting it into the two control arms as well left them carrying
-    // an environment difference for a mechanism they do not use, which is one
-    // more thing a reviewer has to rule out. Deciding it from the copied file
-    // rather than from a second list keeps the two from drifting apart.
-    const composition = await readFile(join(profile, 'cordis.patch.yml'), 'utf8');
-    if (composition.includes(DSH_PLUGINS_VAR)) {
-      env[DSH_PLUGINS_VAR] = rooted(
-        root,
-        `${TOOLCHAIN_IDENTITIES['deepseek-harness'].root}/lib/dsh/plugins`,
-      );
-    }
+    // Exported for all three arms, including the two whose compositions never
+    // read it. An earlier version set it only for a composition that mentions
+    // it, on the reasoning that an unused variable is one more thing a reviewer
+    // has to rule out; that has the causation backwards. The model's own shell
+    // inherits this environment, so setting the variable everywhere is what
+    // makes the three environments identical, and setting it in one arm alone
+    // is what creates a difference the model can read with `env`. It names a
+    // directory and starts nothing, so it is inert where it is unused.
+    env[DSH_PLUGINS_VAR] = rooted(
+      root,
+      `${TOOLCHAIN_IDENTITIES['deepseek-harness'].root}/lib/dsh/plugins`,
+    );
     env.DEEPSEEK_API_KEY = 'maka-eval-local';
     env.DEEPSEEK_BASE_URL = proxyBaseUrl;
     // The harness kills every descendant of its persistent PTY on shutdown,
@@ -483,6 +483,13 @@ async function prepareProfile(
   executableArgs: string[],
 ): Promise<{ env: NodeJS.ProcessEnv; home: string; credentialPath?: string }> {
   const env = { ...process.env };
+  // Named after the profile, and therefore different in each of the three
+  // edit-contract arms, which is a difference the model can read: its shell
+  // inherits this environment, so `echo $HOME` names the arm. It stays that way
+  // because the alternative is worse — the arms would share one home and one
+  // `$DSH_HOME/profiles` tree, and each would overwrite the composition the
+  // others booted from. The experiment is therefore not blind to its subject,
+  // and the profile tree it can read says so in the first line of its comments.
   const home = rooted(root, `/tmp/maka-eval-${selected}`);
   await mkdir(home, { recursive: true, mode: 0o700 });
   env.HOME = home;
