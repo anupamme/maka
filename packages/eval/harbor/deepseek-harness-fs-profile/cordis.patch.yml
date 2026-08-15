@@ -25,11 +25,20 @@
 #   commit 47f943859bef60e4160492346772ded9b24f765a, MIT license.
 #   Reproduced text: the persistent-bash description and the persona below.
 #
-# The deliberate deviations are reasoning strength and command lifetime. The
-# upstream composition configures neither `thinking` nor `reasoningEffort`, and
-# the adapter default resolves to reasoning_effort=high on the wire. Its
-# five-minute Bash timeout can also interrupt package installation before the
-# benchmark deadline and leave the task environment unusable for verification.
+# Two deliberate deviations from the upstream composition, and one place where
+# following it is itself the deviation from the shipped defaults.
+#
+# Reasoning strength: upstream configures neither `thinking` nor
+# `reasoningEffort`, and the adapter default resolves to reasoning_effort=high
+# on the wire. Command lifetime: upstream's five-minute Bash timeout can
+# interrupt package installation before the benchmark deadline and leave the
+# task environment unusable for verification.
+#
+# The third is `streamIdleTimeoutMs`, which upstream sets to 172800000 in
+# examples/jsonrpc-agent/minimal.cordis.yml and which these profiles omitted —
+# leaving the adapter's own 300000 ms default in force. That is stated here
+# because an omission that changes behaviour is a deviation whether or not
+# anyone chose it.
 
 - insert:
     # --- core services ---
@@ -70,12 +79,19 @@
         agents: []
 
     # --- provider ---
+    # `streamIdleTimeoutMs` is upstream's own value, from the jsonrpc-agent
+    # minimal composition. Omitting it left the adapter's 300000 ms default in
+    # force, which is a five-minute ceiling on the gap between two streamed
+    # tokens — and this run pairs `reasoningEffort: max` with a 65-minute bash
+    # deadline. A turn killed by that timeout would be scored as a failure of
+    # whichever edit contract happened to be running.
     - id: llm-deepseek
       name: '@deepseek-ai/dsh-llm-deepseek'
       config:
         apiKeyEnv: DEEPSEEK_API_KEY
         thinking: enabled
         reasoningEffort: max
+        streamIdleTimeoutMs: 172800000
         models:
           - id: deepseek-v4-flash
             contextWindow: 1000000
@@ -180,19 +196,36 @@
         # `<path>/<type>/<content>` envelope and the footer afterwards, outside
         # the budget (`:101-112`).
         #
-        # Measured over this repository's 1480 TS/JS/Python sources at 16000,
-        # this arm delivers 1.105x the lines and emits 1.027x the characters;
-        # the most affected single file is 1.34x lines and 1.19x characters. The
-        # residual runs in this arm's favour and is recorded rather than argued
-        # away. Equalising delivered content instead would mean choosing a budget
-        # from an assumed average line length, which is a larger free parameter
-        # than the few percent above.
+        # Measured, not asserted: `node packages/eval/scripts/measure-read-budget.mjs`
+        # reimplements both renderers from the shipped code and reports the
+        # residual over every tracked TS/JS/Python source. At 16000 over 2195
+        # files this arm delivers 1.093x the lines and 1.009x the characters.
         #
-        # The unit differs too — UTF-16 code units against UTF-8 bytes — so the
-        # two coincide on ASCII and this arm's window narrows on text that is
-        # not. The remaining read-side asymmetry, that the patch arm has no read
-        # tool at all, is contract-inherent and stays.
+        # Both tails, because only one of them was quoted before and it was the
+        # flattering one. The most fs-favourable file is 1.332x lines
+        # (packages/core/src/__tests__/tool-recovery-authority.test.ts) and
+        # 1.186x characters; the least is 0.837x lines and 0.730x characters
+        # (apps/desktop/src/renderer/locales/settings-provider-copy.ts), where
+        # non-ASCII text costs UTF-8 bytes against the baseline's UTF-16 code
+        # units. So the residual runs in this arm's favour on balance and
+        # against it on non-ASCII files. Equalising delivered content instead
+        # would mean choosing a budget from an assumed average line length,
+        # which is a larger free parameter than the few percent above.
+        #
+        # The remaining read-side asymmetry, that the patch arm has no read tool
+        # at all, is contract-inherent and stays. Codex registers no file-read
+        # tool either — its handler set is shell, apply_patch, plan and image
+        # tools — so an arm that reads through bash is that contract, not a
+        # handicap applied to it. Every arm has the same bash.
         readMaxBytes: 16000
+        # The other cap that binds. Left at its shipped 2000 this arm could
+        # never see the 2001st character of any line, at any offset, while the
+        # baseline has no per-line cap at all and can spend the whole budget on
+        # one line — a minified bundle, a single-line JSON payload, a long log
+        # record. That is not a difference in edit contract, it is a hole in
+        # this arm's read tool, so it is raised to the budget, where it can no
+        # longer bind before `readMaxBytes` does.
+        readMaxLineLength: 16000
 
     - id: sessions
       name: '@deepseek-ai/dsh-session-persistence-jsonl'

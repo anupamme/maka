@@ -47,8 +47,13 @@ const EDIT_CONTRACT_ROWS: Readonly<Record<keyof typeof ARMS, readonly Entry[]>> 
   ],
   'deepseek-harness-fs': [
     // Matched to the baseline's output budget: the size of a read is not part
-    // of the contract, and the shipped default is 51200 bytes.
-    { id: 'fs-tools', name: '@deepseek-ai/dsh-tool-fs', config: { readMaxBytes: 16000 } },
+    // of the contract, and the shipped defaults are 51200 bytes and a 2000
+    // character per-line cap the baseline does not have at all.
+    {
+      id: 'fs-tools',
+      name: '@deepseek-ai/dsh-tool-fs',
+      config: { readMaxBytes: 16000, readMaxLineLength: 16000 },
+    },
   ],
   'deepseek-harness-apply-patch': [
     {
@@ -217,6 +222,18 @@ test('the settings that are not the variable are identical across the arms', asy
     const provider = find('llm-deepseek')?.config;
     assert.equal(provider?.thinking, 'enabled', `${arm} does not pin thinking`);
     assert.equal(provider?.reasoningEffort, 'max', `${arm} does not pin reasoning effort`);
+    // The adapter's own default is 300000 ms — five minutes between two
+    // streamed tokens, against `reasoningEffort: max` and a 65-minute bash
+    // deadline. An arm that drops this line does not fail loudly; it loses
+    // turns to a timeout and scores them as failures of its edit contract.
+    assert.equal(
+      provider?.streamIdleTimeoutMs,
+      172800000,
+      `${arm} does not pin the stream idle timeout`,
+    );
+    // The model list too: `contextWindow` is not a contract and a narrowed one
+    // in a single arm would move that arm's score on every long task.
+    assert.deepEqual(provider?.models, [{ id: 'deepseek-v4-flash', contextWindow: 1000000 }]);
     // Both the terminal and the tool carry the deadline, and the arm set is
     // only comparable if neither drifted in one file.
     assert.equal(
@@ -246,10 +263,25 @@ test('the experiment runs the three arms against one another', async () => {
       'utf8',
     ),
   ) as {
+    execution?: { maxConcurrentTaskGroups?: number };
     subjects: Array<
       { id: string; config: { args: string[] } & Record<string, unknown> } & Record<string, unknown>
     >;
   };
+
+  // A task group holds one cell per subject and the runner starts the whole
+  // group at once, so the host load is groups times arms. Every other spec in
+  // this directory lands on 128 concurrent trials — 1x128, 2x64, 8x16 — and
+  // this one ran at 192 until it was noticed. That does not bias one arm
+  // against another, since the contention is shared inside each group, but it
+  // does mean an arm's score here cannot be put beside the same arm's score
+  // from a single-arm spec, and the CPU-bound tasks in this suite have a
+  // 65-minute deadline to run into.
+  const groups = experiment.execution?.maxConcurrentTaskGroups ?? 1;
+  assert.ok(
+    groups * experiment.subjects.length <= 129,
+    `${groups} groups x ${experiment.subjects.length} arms exceeds the 128-trial convention`,
+  );
 
   assert.deepEqual(
     experiment.subjects.map(({ id }) => id),

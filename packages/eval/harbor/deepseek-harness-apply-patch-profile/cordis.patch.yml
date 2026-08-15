@@ -32,11 +32,20 @@
 #   commit 47f943859bef60e4160492346772ded9b24f765a, MIT license.
 #   Reproduced text: the persistent-bash description and the persona below.
 #
-# The deliberate deviations are reasoning strength and command lifetime. The
-# upstream composition configures neither `thinking` nor `reasoningEffort`, and
-# the adapter default resolves to reasoning_effort=high on the wire. Its
-# five-minute Bash timeout can also interrupt package installation before the
-# benchmark deadline and leave the task environment unusable for verification.
+# Two deliberate deviations from the upstream composition, and one place where
+# following it is itself the deviation from the shipped defaults.
+#
+# Reasoning strength: upstream configures neither `thinking` nor
+# `reasoningEffort`, and the adapter default resolves to reasoning_effort=high
+# on the wire. Command lifetime: upstream's five-minute Bash timeout can
+# interrupt package installation before the benchmark deadline and leave the
+# task environment unusable for verification.
+#
+# The third is `streamIdleTimeoutMs`, which upstream sets to 172800000 in
+# examples/jsonrpc-agent/minimal.cordis.yml and which these profiles omitted —
+# leaving the adapter's own 300000 ms default in force. That is stated here
+# because an omission that changes behaviour is a deviation whether or not
+# anyone chose it.
 
 - insert:
     # --- core services ---
@@ -77,12 +86,19 @@
         agents: []
 
     # --- provider ---
+    # `streamIdleTimeoutMs` is upstream's own value, from the jsonrpc-agent
+    # minimal composition. Omitting it left the adapter's 300000 ms default in
+    # force, which is a five-minute ceiling on the gap between two streamed
+    # tokens — and this run pairs `reasoningEffort: max` with a 65-minute bash
+    # deadline. A turn killed by that timeout would be scored as a failure of
+    # whichever edit contract happened to be running.
     - id: llm-deepseek
       name: '@deepseek-ai/dsh-llm-deepseek'
       config:
         apiKeyEnv: DEEPSEEK_API_KEY
         thinking: enabled
         reasoningEffort: max
+        streamIdleTimeoutMs: 172800000
         models:
           - id: deepseek-v4-flash
             contextWindow: 1000000
