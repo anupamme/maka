@@ -920,6 +920,12 @@ async function startMeteringProxy(
         await persistCheckpoint();
       }
     })().catch((error: unknown) => {
+      // The subject sees `HTTP 502` and reports `DeepSeek API error`, which is
+      // indistinguishable from the provider returning 502 itself. Under load
+      // that ambiguity is the whole question — an upstream refusal is the
+      // cohort's cost of running wide, and a failure in this proxy is a defect
+      // — so the error goes to this process's stderr, which the trial collects.
+      process.stderr.write(`${errorReport(error)}\n`);
       response.statusCode = 502;
       response.end(JSON.stringify({ error: safeFailure(error, 'provider proxy failed') }));
     });
@@ -1150,12 +1156,12 @@ function removeCredential(): void {
 // what the published frame may say; this decides what the trial's own log says,
 // and those are different questions.
 function errorReport(error: unknown): string {
-  if (!(error instanceof Error)) return `maka-eval subject setup failed: ${String(error)}`;
+  if (!(error instanceof Error)) return `maka-eval subject failure: ${String(error)}`;
   const causes: string[] = [];
   for (let cause = error.cause; cause instanceof Error; cause = cause.cause) {
     causes.push(`caused by: ${cause.stack ?? `${cause.name}: ${cause.message}`}`);
   }
-  return ['maka-eval subject setup failed', error.stack ?? `${error.name}: ${error.message}`]
+  return ['maka-eval subject failure', error.stack ?? `${error.name}: ${error.message}`]
     .concat(causes)
     .join('\n');
 }
