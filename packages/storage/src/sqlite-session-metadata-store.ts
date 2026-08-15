@@ -70,6 +70,7 @@ import {
   isSubagentSessionRuntime,
   isSubagentSessionSpawn,
   type SessionHeader,
+  type SessionHeaderPatch,
   type StoredMessage,
   type SubagentSessionParent,
   decodeStoredMessage,
@@ -3311,7 +3312,7 @@ export class SqliteSessionMetadataStore {
 
   async update(
     sessionId: string,
-    patch: Partial<SessionHeader>,
+    patch: SessionHeaderPatch,
     options: { expectedVersion?: number; skipNoop?: boolean } = {},
   ): Promise<SessionMetadataRecord> {
     this.assertOpen();
@@ -3328,39 +3329,35 @@ export class SqliteSessionMetadataStore {
     if (Object.prototype.hasOwnProperty.call(patch, 'subagentWorkspace')) {
       throw new Error('Subagent session workspace binding is immutable');
     }
-    return this.transaction(() => this.updateHeaderSync(sessionId, patch, options));
+    return this.transaction(() =>
+      this.updateHeaderSync(sessionId, patch, {
+        ...(options.expectedVersion === undefined
+          ? {}
+          : { expectedVersion: options.expectedVersion }),
+        ...(options.skipNoop === undefined ? {} : { skipNoop: options.skipNoop }),
+      }),
+    );
   }
 
-  async setLifecycleVersioned(
+  async setArchivedVersioned(
     sessions: readonly VersionedSessionIdentity[],
-    state: 'active' | 'archived',
+    isArchived: boolean,
   ): Promise<SessionMetadataRecord[]> {
     this.assertOpen();
     const identities = uniqueVersionedSessionIdentities(sessions);
-    const now = this.now();
-    const patch: Partial<SessionHeader> =
-      state === 'archived'
-        ? {
-            isArchived: true,
-            archivedAt: now,
-            status: 'archived',
-            statusUpdatedAt: now,
-          }
-        : {
-            isArchived: false,
-            archivedAt: undefined,
-            status: 'active',
-            blockedReason: undefined,
-            statusUpdatedAt: now,
-          };
     return this.transaction(() => {
       const records = identities.map(({ sessionId, expectedVersion }) =>
-        this.updateHeaderSync(sessionId, patch, {
-          expectedVersion,
-          skipNoop: true,
-        }),
+        this.updateHeaderSync(
+          sessionId,
+          {},
+          {
+            expectedVersion,
+            skipNoop: true,
+            archiveState: isArchived,
+          },
+        ),
       );
-      if (state === 'archived') this.deleteGoalAuthorities(identities);
+      if (isArchived) this.deleteGoalAuthorities(identities);
       return records;
     });
   }
@@ -3490,8 +3487,6 @@ export class SqliteSessionMetadataStore {
           name,
           is_flagged,
           is_archived,
-          status,
-          status_updated_at,
           parent_session_id,
           subagent_parent_session_id,
           subagent_parent_run_id,
@@ -3509,7 +3504,7 @@ export class SqliteSessionMetadataStore {
           model,
           metadata_version,
           committed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       )
       .run(
@@ -3521,8 +3516,6 @@ export class SqliteSessionMetadataStore {
         header.name,
         booleanInteger(header.isFlagged),
         booleanInteger(header.isArchived),
-        header.status,
-        header.statusUpdatedAt ?? null,
         header.parentSessionId ?? null,
         header.subagentParent?.parentSessionId ?? null,
         header.subagentParent?.spawnedBy.parentRunId ?? null,
@@ -3703,13 +3696,17 @@ export class SqliteSessionMetadataStore {
 
   private updateHeaderSync(
     sessionId: string,
-    patch: Partial<SessionHeader>,
+    patch: SessionHeaderPatch,
     options: {
       expectedVersion?: number;
       skipNoop?: boolean;
       catalogPreview?: { readonly kind: 'replace'; readonly value?: string };
+      archiveState?: boolean;
     } = {},
   ): SessionMetadataRecord {
+    if (Object.prototype.hasOwnProperty.call(patch, 'isArchived')) {
+      throw new Error('Session archive state requires the dedicated lifecycle writer');
+    }
     const current = this.readRecordSync(sessionId);
     if (!current) throw new SessionNotFoundError(sessionId);
     if (
@@ -3723,7 +3720,14 @@ export class SqliteSessionMetadataStore {
       );
     }
     assertConversationCopyTransition(current.header, patch);
-    const next = normalizeSessionHeader({ ...current.header, ...patch }, sessionId);
+    const next = normalizeSessionHeader(
+      {
+        ...current.header,
+        ...patch,
+        ...(options.archiveState === undefined ? {} : { isArchived: options.archiveState }),
+      },
+      sessionId,
+    );
     if (next.id !== sessionId) {
       throw new SessionMetadataConflictError('Session metadata identity cannot be changed');
     }
@@ -3749,8 +3753,6 @@ export class SqliteSessionMetadataStore {
           name = ?,
           is_flagged = ?,
           is_archived = ?,
-          status = ?,
-          status_updated_at = ?,
           parent_session_id = ?,
           subagent_parent_session_id = ?,
           revision_root_session_id = ?,
@@ -3772,8 +3774,6 @@ export class SqliteSessionMetadataStore {
         next.name,
         booleanInteger(next.isFlagged),
         booleanInteger(next.isArchived),
-        next.status,
-        next.statusUpdatedAt ?? null,
         next.parentSessionId ?? null,
         next.subagentParent?.parentSessionId ?? null,
         next.revisionRootSessionId ?? null,
@@ -3825,7 +3825,7 @@ export class SqliteSessionMetadataStore {
     },
     options: {
       expectedVersion?: number;
-      headerPatch?: Partial<SessionHeader>;
+      headerPatch?: SessionHeaderPatch;
     } = {},
   ): { boundary: ExecutionBoundary; record: SessionMetadataRecord } {
     const record = this.readRecordSync(sessionId);

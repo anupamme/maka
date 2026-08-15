@@ -29,6 +29,7 @@ import type {
 import { messageContentsEqual, normalizeMessageContent } from '@maka/core/events';
 import type {
   SessionHeader,
+  SessionHeaderPatch,
   SessionBlockedReason,
   SessionStatus,
   SessionSummary,
@@ -667,10 +668,10 @@ export interface SessionStore {
   listTurns(sessionId: string): Promise<TurnRecord[]>;
   appendMessage(sessionId: string, m: StoredMessage): Promise<void>;
   appendMessages(sessionId: string, ms: StoredMessage[]): Promise<void>;
-  updateHeader(sessionId: string, patch: Partial<SessionHeader>): Promise<SessionHeader>;
+  updateHeader(sessionId: string, patch: SessionHeaderPatch): Promise<SessionHeader>;
   updateHeaderVersioned?(
     sessionId: string,
-    patch: Partial<SessionHeader>,
+    patch: SessionHeaderPatch,
     expectedRevision: number,
   ): Promise<VersionedSessionHeader>;
   readHeaderRecordSnapshot?(sessionId: string): Promise<VersionedSessionHeader>;
@@ -679,8 +680,6 @@ export interface SessionStore {
     input: SessionConfigurationStoreUpdate,
   ): Promise<VersionedSessionHeader>;
   markSessionReadThrough(sessionId: string, readThroughTs: number): Promise<SessionHeader>;
-  archive(sessionId: string): Promise<void>;
-  unarchive(sessionId: string): Promise<void>;
   setFlagged(sessionId: string, isFlagged: boolean): Promise<void>;
   rename(sessionId: string, name: string): Promise<void>;
   setGeneratedTitleIfAbsent?(sessionId: string, title: string): Promise<SessionHeader | null>;
@@ -1143,7 +1142,7 @@ export class SessionManager {
             current.revision,
           );
         }
-        if (current.header.isArchived || current.header.status === 'archived') {
+        if (current.header.isArchived) {
           throw new SessionConfigurationTransitionError(
             'operation_conflict',
             'Archived Session configuration cannot be changed',
@@ -1218,7 +1217,7 @@ export class SessionManager {
           current.revision,
         );
       }
-      if (current.header.isArchived || current.header.status === 'archived') {
+      if (current.header.isArchived) {
         throw new SessionConfigurationTransitionError(
           'operation_conflict',
           'Archived Session workspace cannot be relocated',
@@ -1410,7 +1409,7 @@ export class SessionManager {
 
   private async recoverInterruptedSessionsWithPolicy(policy: RecoveryPolicy): Promise<string[]> {
     const interrupted = (await listSessionsForRecovery(this.deps.store, policy)).filter(
-      (session) => session.status !== 'archived',
+      (session) => !session.isArchived,
     );
     const recovered = new Set<string>();
     for (const session of interrupted) {
@@ -1567,7 +1566,7 @@ export class SessionManager {
     return [...recovered];
   }
 
-  async updateSession(sessionId: string, patch: Partial<SessionHeader>): Promise<SessionSummary> {
+  async updateSession(sessionId: string, patch: SessionHeaderPatch): Promise<SessionSummary> {
     const backendConfigChanged = changesBackendConfig(patch);
     if (backendConfigChanged && this.runtimeKernel.hasActiveRuns(sessionId)) {
       throw new Error('Cannot change backend configuration while a turn is running');
@@ -1596,23 +1595,6 @@ export class SessionManager {
       await this.runtimeKernel.disposeBackend(sessionId);
     }
     return headerToSummary(next);
-  }
-
-  async archive(sessionId: string): Promise<void> {
-    const shellRunClose = await this.deps.shellRuns?.terminateSession(sessionId);
-    try {
-      await this.deps.store.archive(sessionId);
-    } catch (error) {
-      if (shellRunClose) this.deps.shellRuns?.rollbackSessionClose(shellRunClose);
-      throw error;
-    }
-    if (shellRunClose) await this.deps.shellRuns?.commitSessionClose(shellRunClose);
-    await this.runtimeKernel.disposeBackend(sessionId);
-  }
-
-  async unarchive(sessionId: string): Promise<void> {
-    await this.deps.store.unarchive(sessionId);
-    this.deps.shellRuns?.resumeSession(sessionId);
   }
 
   async setSessionStatus(
@@ -2897,7 +2879,7 @@ export class SessionManager {
     if (messages.some((message) => 'turnId' in message && message.turnId === claim.targetTurnId)) {
       throw new Error(`Claimed graph turn ${claim.targetTurnId} already has durable messages`);
     }
-    if (child.isArchived || child.status === 'archived' || child.status === 'aborted') {
+    if (child.isArchived || child.status === 'aborted') {
       throw new Error('Claimed graph execution target child session is terminated');
     }
     if (input.abortSignal?.aborted) {
@@ -5383,10 +5365,7 @@ export class SessionManager {
     await this.updateHeader(sessionId, buildStatusPatch(status, ts, blockedReason));
   }
 
-  private async updateHeader(
-    sessionId: string,
-    patch: Partial<SessionHeader>,
-  ): Promise<SessionHeader> {
+  private async updateHeader(sessionId: string, patch: SessionHeaderPatch): Promise<SessionHeader> {
     const next = await this.deps.store.updateHeader(sessionId, patch);
     this.runtimeKernel.updateCachedHeader(sessionId, next);
     return next;
@@ -6456,7 +6435,7 @@ function claimedAgentGraphIntentResult(
   };
 }
 
-export function changesBackendConfig(patch: Partial<SessionHeader>): boolean {
+export function changesBackendConfig(patch: SessionHeaderPatch): boolean {
   return (
     'backend' in patch ||
     'llmConnectionSlug' in patch ||

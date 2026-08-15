@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { RuntimeHostOperationError } from '@maka/runtime-host/client';
-import type {
-  SessionCatalogProjection,
-  SessionContinuitySnapshot,
-  SubscriptionFrame,
-  TurnSnapshot,
+import {
+  SESSION_CONTINUITY_SCHEMA_VERSION,
+  type SessionCatalogProjection,
+  type SessionContinuitySnapshot,
+  type SubscriptionFrame,
+  type TurnSnapshot,
 } from '@maka/runtime-host/protocol';
 import { BotSessionUnavailableError } from '../bot-session-adapter.js';
 import {
@@ -401,7 +402,7 @@ function startedTurn(turn: TurnSnapshot) {
 
 function continuitySnapshot(rootTurn: TurnSnapshot | null): SessionContinuitySnapshot {
   return {
-    schemaVersion: 3,
+    schemaVersion: SESSION_CONTINUITY_SCHEMA_VERSION,
     session: {
       sessionId: 'bot-session-1',
       metadataRevision: 1,

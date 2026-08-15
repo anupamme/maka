@@ -1574,7 +1574,7 @@ describe('SessionManager claimed graph intent execution', () => {
       ),
     ).toMatchObject({ text: 'summarize the routed records' });
 
-    await store.archive(child.id);
+    await store.updateHeader(child.id, { isArchived: true });
     const retry = await manager.runClaimedAgentGraphIntent({
       ...graphExecutionInput(claim, 'summarize the routed records'),
     });
@@ -2028,7 +2028,7 @@ describe('SessionManager claimed graph intent execution', () => {
     );
 
     const archivedChild = await createGraphOperatorSession(store, parent.id);
-    await store.archive(archivedChild.id);
+    await store.updateHeader(archivedChild.id, { isArchived: true });
     const archivedClaim = graphIntentClaim(
       {
         claimId: `graph_claim_${'3'.repeat(32)}`,
@@ -17341,23 +17341,6 @@ class MemorySessionStore implements SessionStore {
     if (!hook) return;
     this.interleaveBeforeMarkSessionReadWriteFor.delete(sessionId);
     await hook();
-  }
-
-  async archive(sessionId: string): Promise<void> {
-    await this.updateHeader(sessionId, {
-      isArchived: true,
-      status: 'archived',
-      statusUpdatedAt: 1,
-    });
-  }
-
-  async unarchive(sessionId: string): Promise<void> {
-    await this.updateHeader(sessionId, {
-      isArchived: false,
-      status: 'active',
-      blockedReason: undefined,
-      statusUpdatedAt: 1,
-    });
   }
 
   async setFlagged(sessionId: string, isFlagged: boolean): Promise<void> {

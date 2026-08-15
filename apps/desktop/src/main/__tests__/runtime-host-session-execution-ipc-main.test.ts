@@ -7,7 +7,10 @@ import test from "node:test";
 import type { IpcMain } from "electron";
 import { SIDE_CONVERSATION_SESSION_LABEL } from '@maka/core/side-conversation';
 import { type AttachmentRef } from '@maka/core/events';
-import type { SessionCatalogProjection } from "@maka/runtime-host/protocol";
+import {
+  SESSION_CONTINUITY_SCHEMA_VERSION,
+  type SessionCatalogProjection,
+} from "@maka/runtime-host/protocol";
 import { createAttachmentApprovalRegistry } from "../attachment-approval.js";
 import type { DesktopRuntimeHostSession } from "../runtime-host-client.js";
 import {
@@ -620,7 +623,7 @@ function observerWithTranscript(
     client: {
       openSession: async () => runtimeHostSessionFixture({
         snapshot: {
-          schemaVersion: 3,
+          schemaVersion: SESSION_CONTINUITY_SCHEMA_VERSION,
           session: {
             sessionId: "session-1",
             metadataRevision: 1,

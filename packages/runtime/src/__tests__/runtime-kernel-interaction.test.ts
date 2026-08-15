@@ -642,8 +642,6 @@ function memoryStore(): SessionStore {
       return header;
     },
     markSessionReadThrough: async () => header,
-    archive: async () => {},
-    unarchive: async () => {},
     setFlagged: async () => {},
     rename: async () => {},
     remove: async () => {},
