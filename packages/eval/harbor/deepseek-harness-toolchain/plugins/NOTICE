@@ -69,14 +69,16 @@ tool-apply-patch/__tests__/codex-fixtures.json
   reached without a grammar. Every operation the grammar defines is implemented,
   so nothing in the text describes something the tool refuses.
 
-  Nor is the copied file live at that commit. prompt_with_apply_patch_instructions.md
-  is referenced only from codex-rs/core/src/session/tests.rs, whose four model
-  cases all declare `expects_apply_patch_description: false`, so the assertion
-  comparing instructions against it never runs; model instructions come from
-  codex-rs/models-manager/models.json, and none of its eight templates carries
-  the section. It is upstream's own authored description of the format, and it
-  is retired. That is why it is named precisely here rather than described as
-  what Codex sends.
+  Nor is the copied file delivered from where it sits. It is referenced only
+  from codex-rs/core/src/session/tests.rs, whose four model cases all declare
+  `expects_apply_patch_description: false`, so the assertion comparing
+  instructions against it never runs. Model instructions come from
+  codex-rs/models-manager/models.json; seven of its eight templates carry no
+  `## apply_patch` section, and the eighth, gpt-5.2, carries a shorter one with
+  the same envelope, the same three headers and the same worked example. So the
+  format is still taught in prose upstream and this file is the fuller version
+  of that prose — which is why it is named precisely here rather than described
+  as what Codex sends.
 
   parse-patch.mjs and codex-apply.mjs are ports of the functions below: the same
   algorithms in JavaScript, following their structure and their branch order
@@ -95,6 +97,10 @@ tool-apply-patch/__tests__/codex-fixtures.json
                                                       `compute_replacements`,
                                                       `apply_replacements`)
       codex-rs/apply-patch/src/invocation.rs         (`try_verify_apply_patch_args`)
+      codex-rs/file-system/src/lib.rs                (`read_file_text`, which is
+                                                      `read_file` + `String::from_utf8`
+                                                      and is why index.mjs decodes
+                                                      bytes itself)
       codex-rs/apply-patch/src/lib.rs                (`print_summary`, apply order)
       codex-rs/core/src/tools/runtimes/apply_patch.rs (re-applying the raw patch)
         all at commit a7edf37cb46b5fc4d50bd03df8e5999a86f602eb
@@ -143,8 +149,11 @@ tool-apply-patch/__tests__/codex-fixtures.json
   items named before. Two behavioural differences, not one: `seek_sequence`'s
   end-of-file start position, which applies to `PreserveLineEndings` only, and
   the duplicate-path check in `try_verify_apply_patch_args`, which does not
-  exist at 0.147.0 — which is precisely why the binary composes an envelope
-  naming one path twice where this tool refuses it. Under `NormalizeToLf` the
+  exist at 0.147.0 — a difference on the function-tool path only. It is not why
+  the recorded binary composes an envelope naming one path twice: the standalone
+  applier calls `apply_patch_with_mode` directly
+  (`apply-patch/src/standalone_executable.rs`) and has no verification pass at
+  either version. Under `NormalizeToLf` the
   hunk algorithms are the same, which is why the fixtures and the port agree on
   every case but the ones codex-fixtures.test.mjs names as divergences.
 

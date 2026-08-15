@@ -17,8 +17,10 @@
 // derived from the build inputs alone would match two different installs of
 // the same version, which is exactly the drift a benchmark needs to detect.
 //
-// `npm i` is not reproducible, so rebuilding produces a new fingerprint. That
-// is the point: re-pin it with --write and the change is visible in review.
+// Native modules are compiled during the build and need not come out
+// byte-identical on another machine, so rebuilding can produce a new
+// fingerprint even from the same lockfile. That is the point: re-pin it with
+// --write and the change is visible in review.
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
