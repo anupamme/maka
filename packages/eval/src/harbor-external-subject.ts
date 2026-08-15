@@ -469,6 +469,14 @@ try {
   failureReason = stopped
     ? 'external subject cancelled'
     : safeFailure(error, 'external subject setup failed');
+  // The frame carries `safeFailure`'s sanitized text because the result kernel
+  // is a published contract. Nothing carried the error itself, so every setup
+  // failure reached the operator as the string `external subject setup failed`
+  // and had to be re-derived by rerunning the arm by hand. This process's own
+  // stderr is the trial's `maka-subject.stderr.txt`, which is a collected
+  // artifact rather than a published one, and is where a subject's account of
+  // its own failure belongs.
+  if (!stopped) process.stderr.write(`${errorReport(error)}\n`);
   await writeState('setup_failed', { failureReason }).catch(() => undefined);
 } finally {
   process.removeListener('SIGTERM', terminate);
@@ -1133,6 +1141,20 @@ function rooted(root: string, absolutePath: string): string {
 
 function removeCredential(): void {
   if (credentialPath) rmSync(credentialPath, { force: true });
+}
+
+// The whole error, for the collected stderr artifact. `safeFailure` decides
+// what the published frame may say; this decides what the trial's own log says,
+// and those are different questions.
+function errorReport(error: unknown): string {
+  if (!(error instanceof Error)) return `maka-eval subject setup failed: ${String(error)}`;
+  const causes: string[] = [];
+  for (let cause = error.cause; cause instanceof Error; cause = cause.cause) {
+    causes.push(`caused by: ${cause.stack ?? `${cause.name}: ${cause.message}`}`);
+  }
+  return ['maka-eval subject setup failed', error.stack ?? `${error.name}: ${error.message}`]
+    .concat(causes)
+    .join('\n');
 }
 
 function safeFailure(error: unknown, fallback: string): string {
