@@ -303,10 +303,17 @@ test('the experiment runs the three arms against one another', async () => {
   // inside each group, but it does mean an arm's score here cannot be put
   // beside the same arm's score from a single-arm spec, and the CPU-bound tasks
   // in this suite have a 65-minute deadline to run into.
+  //
+  // 128 is the convention; the binding number is the host. The only full run
+  // this suite has ever had put 24 concurrent trials on 32 vCPU / 64 GiB, so
+  // 2.7 GiB per trial is the one density that is known to survive a Terminal
+  // Bench build task. The account's CVM quota is 60 vCPU per zone, which caps
+  // the host at 56 vCPU / 256 GiB — 96 trials there is that same density, and
+  // 128 would be 2.0 GiB and an OOM kill away from an infra failure.
   const groups = experiment.execution?.maxConcurrentTaskGroups ?? 1;
   assert.ok(
-    groups * experiment.subjects.length <= 128,
-    `${groups} groups x ${experiment.subjects.length} arms exceeds the 128-trial convention`,
+    groups * experiment.subjects.length <= 96,
+    `${groups} groups x ${experiment.subjects.length} arms exceeds what a 256 GiB host carries`,
   );
 
   assert.deepEqual(
