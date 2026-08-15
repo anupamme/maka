@@ -390,6 +390,7 @@ process.once('SIGINT', interrupt);
 const logsRoot = rooted(systemRoot, '/logs/agent');
 const statePath = join(logsRoot, `${profile}.wrapper-state.json`);
 const usagePath = join(logsRoot, `${profile}.provider-usage.json`);
+const stderrPath = join(logsRoot, `${profile}.stderr.txt`);
 const artifacts: Record<string, unknown>[] = [];
 let usage: Usage | null = null;
 let costUsd: number | null = null;
@@ -421,7 +422,7 @@ try {
     const prepared = await prepareProfile(profile, proxy.baseUrl, systemRoot, args);
     credentialPath = prepared.credentialPath;
     if (profile === 'claude-code') prepareClaudeWorkspace(systemRoot, prepared.home);
-    const result = await runChild(command, args, prepared.env, profile);
+    const result = await runChild(command, args, prepared.env, profile, stderrPath);
     child = undefined;
     await writeState('child_exited', { exitCode: result.exitCode });
     const metering = await proxy.report();
@@ -447,6 +448,7 @@ try {
       { kind: 'external-process', profile, exitCode: result.exitCode },
       streamArtifact('stdout', profile, result.stdout),
       streamArtifact('stderr', profile, result.stderr),
+      fileArtifact('stderr-tail', stderrPath, profile),
       {
         kind: 'provider-metering',
         profile,
@@ -522,6 +524,7 @@ async function runChild(
   executableArgs: string[],
   env: NodeJS.ProcessEnv,
   selected: Profile,
+  stderrPath: string,
 ): Promise<{ exitCode: number; stdout: ClassifiedStream; stderr: StreamDiagnostic }> {
   const running = spawn(executable, executableArgs, {
     env,
@@ -529,7 +532,7 @@ async function runChild(
   });
   child = running;
   const stdout = classifyStream(running.stdout, selected);
-  const stderr = captureStreamDiagnostic(running.stderr);
+  const stderr = captureStreamDiagnostic(running.stderr, stderrPath);
   const exitCode = await new Promise<number>((resolveExit, reject) => {
     running.once('error', reject);
     running.once('exit', (code) => resolveExit(code ?? 1));
@@ -607,13 +610,43 @@ async function classifyStream(input: Readable, selected: Profile): Promise<Class
   };
 }
 
-async function captureStreamDiagnostic(input: Readable): Promise<StreamDiagnostic> {
+// The tail of a subject's stderr that is kept as an artifact rather than only
+// counted and hashed.
+//
+// Counting it alone was enough to know that a failing arm had said something
+// and not enough to read it, which is the difference between diagnosing a
+// failure from the run's own output and reproducing it by hand on the host that
+// produced it. Both failures this file has had — a composition the harness
+// could not load, and a subject that exited after one model response — landed
+// as a byte count and a digest.
+//
+// A tail rather than the whole stream, because a subject that loops printing is
+// a subject whose stderr would otherwise fill the trial's disk, and because a
+// harness reports what killed it on the way out. The byte count and digest
+// still describe the whole stream, so a truncated tail is visible as such.
+const STDERR_TAIL_BYTES = 64 * 1024;
+
+async function captureStreamDiagnostic(input: Readable, sink?: string): Promise<StreamDiagnostic> {
   const digest = createHash('sha256');
+  const tail: Buffer[] = [];
+  let tailBytes = 0;
   let observedBytes = 0;
   for await (const chunk of input) {
     const bytes = Buffer.from(chunk);
     observedBytes += bytes.byteLength;
     digest.update(bytes);
+    if (sink === undefined) continue;
+    tail.push(bytes);
+    tailBytes += bytes.byteLength;
+    while (tail.length > 1 && tailBytes - (tail[0]?.byteLength ?? 0) >= STDERR_TAIL_BYTES) {
+      tailBytes -= tail.shift()?.byteLength ?? 0;
+    }
+  }
+  if (sink !== undefined) {
+    const joined = Buffer.concat(tail);
+    await writeFile(sink, joined.subarray(Math.max(0, joined.byteLength - STDERR_TAIL_BYTES)), {
+      mode: 0o600,
+    });
   }
   return { observedBytes, sha256: digest.digest('hex') };
 }
