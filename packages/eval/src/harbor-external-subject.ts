@@ -448,7 +448,6 @@ try {
       { kind: 'external-process', profile, exitCode: result.exitCode },
       streamArtifact('stdout', profile, result.stdout),
       streamArtifact('stderr', profile, result.stderr),
-      fileArtifact('stderr-tail', stderrPath, profile),
       {
         kind: 'provider-metering',
         profile,
@@ -624,6 +623,12 @@ async function classifyStream(input: Readable, selected: Profile): Promise<Class
 // a subject whose stderr would otherwise fill the trial's disk, and because a
 // harness reports what killed it on the way out. The byte count and digest
 // still describe the whole stream, so a truncated tail is visible as such.
+//
+// Written and not announced in the result frame. `/logs/agent` is collected
+// into the trial directory already, so the file arrives either way, while the
+// frame's payload is capped at 2 KiB by the relay — a cap these arms sit close
+// enough to that one more artifact entry turned every cell into
+// `external subject result transport failed`.
 const STDERR_TAIL_BYTES = 64 * 1024;
 
 async function captureStreamDiagnostic(input: Readable, sink?: string): Promise<StreamDiagnostic> {
