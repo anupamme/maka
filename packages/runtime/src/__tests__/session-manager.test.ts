@@ -5129,6 +5129,28 @@ describe('SessionManager permission mode updates', () => {
     ]);
   });
 
+  test('rejects execution configuration updates for archived sessions', async () => {
+    const store = new MemorySessionStore();
+    const manager = new SessionManager({
+      store,
+      backends: new BackendRegistry(),
+      newId: nextId(),
+      now: nextNow(5_500),
+    });
+    const session = await manager.createSession(makeInput());
+    await store.updateHeader(session.id, { isArchived: true });
+
+    await assert.rejects(
+      manager.updateSession(session.id, { model: 'replacement-model' }),
+      (error: unknown) => {
+        assert.ok(error instanceof SessionConfigurationTransitionError);
+        assert.equal(error.code, 'operation_conflict');
+        return true;
+      },
+    );
+    assert.equal((await store.readHeader(session.id)).model, session.model);
+  });
+
   test('starts a new turn without workspace identity when safety inspection fails', async () => {
     const store = new MemorySessionStore();
     const runStore = new MemoryAgentRunStore();

@@ -195,8 +195,9 @@ const statusSessions = [
   }),
   makeSession({
     id: 'status-done',
-    name: '已完成的 smoke run',
+    name: '已归档的 smoke run',
     status: 'done',
+    isArchived: true,
     lastMessageAt: NOW - 2 * 60 * 60 * 1000,
   }),
   makeSession({

@@ -1567,6 +1567,15 @@ export class SessionManager {
   }
 
   async updateSession(sessionId: string, patch: SessionHeaderPatch): Promise<SessionSummary> {
+    if (changesSessionExecutionConfiguration(patch)) {
+      const current = await this.deps.store.readHeader(sessionId);
+      if (current.isArchived) {
+        throw new SessionConfigurationTransitionError(
+          'operation_conflict',
+          'Archived Session configuration cannot be changed',
+        );
+      }
+    }
     const backendConfigChanged = changesBackendConfig(patch);
     if (backendConfigChanged && this.runtimeKernel.hasActiveRuns(sessionId)) {
       throw new Error('Cannot change backend configuration while a turn is running');
@@ -6454,6 +6463,15 @@ export function changesBackendConfig(patch: SessionHeaderPatch): boolean {
     // to `explore`, which left an already-built `execute`/`bypass` backend
     // serving the remote sender.
     'permissionMode' in patch
+  );
+}
+
+function changesSessionExecutionConfiguration(patch: SessionHeaderPatch): boolean {
+  return (
+    changesBackendConfig(patch) ||
+    'connectionLocked' in patch ||
+    'orchestrationMode' in patch ||
+    'projectId' in patch
   );
 }
 
