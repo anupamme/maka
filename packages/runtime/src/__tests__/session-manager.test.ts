@@ -5437,7 +5437,11 @@ describe('SessionManager permission mode updates', () => {
     const runtimeEventStore = new MemoryRuntimeEventStore();
     const backends = new BackendRegistry();
     const observed: InvocationResult[] = [];
-    backends.register('fake', (ctx) => new FinalTextTestBackend(ctx));
+    let backend: FinalTextTestBackend | undefined;
+    backends.register('fake', (ctx) => {
+      backend = new FinalTextTestBackend(ctx);
+      return backend;
+    });
     const manager = new SessionManager({
       store,
       runStore,
@@ -5453,11 +5457,16 @@ describe('SessionManager permission mode updates', () => {
     const session = await manager.createSession(makeInput());
 
     const sessionEvents = await collectSessionEvents(
-      manager.sendMessage(session.id, { turnId: 'turn-1', text: 'hello' }),
+      manager.sendMessage(session.id, {
+        turnId: 'turn-1',
+        text: 'hello',
+        toolMode: 'code_mode',
+      }),
     );
 
     expect(sessionEvents.map((event) => event.type)).toEqual(['text_complete', 'complete']);
     expect(sessionEvents.map((event) => event.id)).toEqual(['turn-1-final', 'turn-1-complete']);
+    expect(backend?.sendInputs[0]?.toolMode).toBe('code_mode');
     expect(observed.length).toBe(1);
 
     const [run] = await runStore.listSessionRuns(session.id);
@@ -16989,7 +16998,6 @@ class MemorySessionStore implements SessionStore {
   readonly failNextReadMessagesFor = new Map<string, number>();
   readonly failListTurnsFor = new Set<string>();
   readonly failUpdateHeaderFor = new Set<string>();
-  readonly interleaveBeforeMarkSessionReadWriteFor = new Map<string, () => Promise<void> | void>();
   failNextAppendMessage: ((message: StoredMessage) => boolean) | undefined;
   failAfterNextAppendMessage: ((message: StoredMessage) => boolean) | undefined;
   disposeCount = 0;
@@ -17206,7 +17214,6 @@ class MemorySessionStore implements SessionStore {
       error.code = 'ENOENT';
       throw error;
     }
-    await this.runMarkSessionReadInterleave(sessionId);
     return header;
   }
 
@@ -17250,26 +17257,6 @@ class MemorySessionStore implements SessionStore {
     const next = { ...current, ...patch };
     this.headers.set(sessionId, next);
     return next;
-  }
-
-  async markSessionReadThrough(sessionId: string, readThroughTs: number): Promise<SessionHeader> {
-    await this.runMarkSessionReadInterleave(sessionId);
-    if (this.failUpdateHeaderFor.has(sessionId))
-      throw new Error(`Cannot update header for ${sessionId}`);
-    const current = await this.readHeader(sessionId);
-    if (!current.hasUnread) return current;
-    if (current.lastMessageAt !== undefined && current.lastMessageAt > readThroughTs)
-      return current;
-    const next = { ...current, hasUnread: false };
-    this.headers.set(sessionId, next);
-    return next;
-  }
-
-  private async runMarkSessionReadInterleave(sessionId: string): Promise<void> {
-    const hook = this.interleaveBeforeMarkSessionReadWriteFor.get(sessionId);
-    if (!hook) return;
-    this.interleaveBeforeMarkSessionReadWriteFor.delete(sessionId);
-    await hook();
   }
 
   async setFlagged(sessionId: string, isFlagged: boolean): Promise<void> {

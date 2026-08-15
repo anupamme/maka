@@ -261,7 +261,6 @@ export interface SessionStore {
   appendMessage(sessionId: string, message: StoredMessage): Promise<void>;
   appendMessages(sessionId: string, messages: StoredMessage[]): Promise<void>;
   updateHeader(sessionId: string, patch: SessionHeaderPatch): Promise<SessionHeader>;
-  markSessionReadThrough(sessionId: string, readThroughTs: number): Promise<SessionHeader>;
   setFlagged(sessionId: string, isFlagged: boolean): Promise<void>;
   rename(sessionId: string, name: string): Promise<void>;
   setGeneratedTitleIfAbsent(sessionId: string, title: string): Promise<SessionHeader | null>;
@@ -869,23 +868,6 @@ class SqliteSessionStore implements SessionAuthorityStore {
   async completeSessionRetirementCleanup(sessionId: string): Promise<void> {
     await this.ensureReady();
     await this.metadata.completeSessionRetirementCleanup(sessionId);
-  }
-
-  async markSessionReadThrough(sessionId: string, readThroughTs: number): Promise<SessionHeader> {
-    const header = await this.readHeaderSnapshot(sessionId);
-    const messages = await this.readMessagesSnapshot(sessionId);
-    const effectiveLastMessageAt = maxTimestamp(
-      header.lastMessageAt,
-      latestVisibleMessageAt(messages),
-    );
-    if (
-      !Number.isFinite(readThroughTs) ||
-      !header.hasUnread ||
-      (effectiveLastMessageAt !== undefined && effectiveLastMessageAt > readThroughTs)
-    ) {
-      return header;
-    }
-    return this.updateHeader(sessionId, { hasUnread: false });
   }
 
   async setFlagged(sessionId: string, isFlagged: boolean): Promise<void> {
