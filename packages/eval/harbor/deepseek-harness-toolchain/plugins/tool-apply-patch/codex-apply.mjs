@@ -30,6 +30,8 @@
 // Upstream's two line-ending scenarios are run under it and are named as
 // divergences in __tests__/upstream-scenarios.test.mjs.
 
+import { rustTrim, rustTrimEnd } from './rust-trim.mjs';
+
 /**
  * Find `pattern` within `lines` at or after `start`, in four passes of
  * decreasing strictness.
@@ -72,9 +74,14 @@ export function seekSequence(lines, pattern, start, eof) {
   return undefined;
 }
 
+// `rustTrim`, not `String.prototype.trim`. Upstream's three loose passes call
+// `str::trim_end` and `str::trim` (`seek_sequence.rs:49,62,82`), and the two
+// languages disagree on U+FEFF and U+0085 — see rust-trim.mjs. With the native
+// pair, a file whose first line carries a byte-order mark matched a pattern
+// without one, and the file was then written back with the mark deleted.
 const exact = (line) => line;
-const trimEnd = (line) => line.trimEnd();
-const trimBoth = (line) => line.trim();
+const trimEnd = rustTrimEnd;
+const trimBoth = rustTrim;
 
 // The same code points upstream folds, in the same directions.
 const PUNCTUATION = new Map([
@@ -86,7 +93,7 @@ const PUNCTUATION = new Map([
 
 function normalise(text) {
   let out = '';
-  for (const character of text.trim()) out += PUNCTUATION.get(character) ?? character;
+  for (const character of rustTrim(text)) out += PUNCTUATION.get(character) ?? character;
   return out;
 }
 

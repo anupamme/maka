@@ -913,6 +913,42 @@
       "tree": {
         "a.txt": "old\n"
       }
+    },
+    {
+      "name": "byte-order mark at the head of the file being patched",
+      "files": {
+        "a.txt": "﻿import os\nimport sys\n"
+      },
+      "patch": "*** Begin Patch\n*** Update File: a.txt\n@@\n import os\n+import json\n*** End Patch\n",
+      "refused": true,
+      "output": "Failed to find expected lines in /private<root>/a.txt:\nimport os\n",
+      "tree": {
+        "a.txt": "﻿import os\nimport sys\n"
+      }
+    },
+    {
+      "name": "a line the file terminates with U+FEFF",
+      "files": {
+        "a.txt": "import os﻿\nimport sys\n"
+      },
+      "patch": "*** Begin Patch\n*** Update File: a.txt\n@@\n-import os\n+IMPORT\n*** End Patch\n",
+      "refused": true,
+      "output": "Failed to find expected lines in /private<root>/a.txt:\nimport os\n",
+      "tree": {
+        "a.txt": "import os﻿\nimport sys\n"
+      }
+    },
+    {
+      "name": "a line the file terminates with U+0085",
+      "files": {
+        "f.txt": "gamma\ndelta\n"
+      },
+      "patch": "*** Begin Patch\n*** Update File: f.txt\n@@\n-gamma\n+GAMMA\n*** End Patch\n",
+      "refused": false,
+      "output": "Success. Updated the following files:\nM f.txt\n",
+      "tree": {
+        "f.txt": "GAMMA\ndelta\n"
+      }
     }
   ]
 }

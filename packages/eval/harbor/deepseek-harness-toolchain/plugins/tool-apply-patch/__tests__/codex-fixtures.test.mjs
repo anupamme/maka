@@ -43,6 +43,27 @@ const DIVERGENCES = new Map([
       tree: { 'a.txt': 'x\n', 'b.txt': 'y\n' },
     },
   ],
+  [
+    'byte-order mark at the head of the file being patched',
+    {
+      // Not a divergence in this tool, and not one it can remove. The harness's
+      // filesystem provider decodes with `new TextDecoder('utf-8', {fatal:true})`
+      // (`dsh-fs-local` `decodeUtf8`), whose `ignoreBOM` defaults to false —
+      // meaning it strips a leading mark — so `ctx.fs.readText` hands this tool
+      // a string that no longer has one. The reference reads bytes, so its
+      // context line does not match and it refuses.
+      //
+      // It is the same for the other two arms: every one of them reads through
+      // this provider, so a read-modify-write drops a leading mark whichever
+      // edit contract does it. That makes it a property of the harness rather
+      // than a difference between the arms, which is why it is recorded here
+      // and not treated as a confound.
+      why: 'the provider strips a leading byte-order mark before this tool reads the file',
+      refused: false,
+      output: 'Success. Updated the following files:\nM a.txt',
+      tree: { 'a.txt': 'import os\nimport json\nimport sys\n' },
+    },
+  ],
 ]);
 
 describe(`codex ${fixtures.codex} fixtures`, () => {

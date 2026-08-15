@@ -29,6 +29,8 @@
 // says. `add_line+` is the case that matters — the parser accepts an add hunk
 // with no lines at all and creates an empty file.
 
+import { rustTrim, rustTrimEnd } from './rust-trim.mjs';
+
 const BEGIN_PATCH = '*** Begin Patch';
 const END_PATCH = '*** End Patch';
 const ADD_FILE = '*** Add File: ';
@@ -47,22 +49,10 @@ const SECTION_HEADERS = [ADD_FILE, DELETE_FILE, UPDATE_FILE];
 // compares `line.trim_end()`, so a context line that happens to read
 // `    *** Update File: x` stays content instead of silently ending the
 // section.
+// `rustTrim`, not `String.prototype.trim`: the two disagree on U+FEFF and
+// U+0085, and rust-trim.mjs says why that is reachable.
 const marker = (line) => (line === undefined ? undefined : rustTrim(line));
-const bodyMarker = (line) => (line === undefined ? undefined : line.replace(RUST_TRAILING, ''));
-
-// Rust's `str::trim` cuts the Unicode `White_Space` property; JavaScript's cuts
-// `WhiteSpace` plus `LineTerminator`. The two agree on everything a patch is
-// likely to contain and differ on exactly two code points: U+FEFF, which JS
-// strips and Rust does not, and U+0085, which Rust strips and JS does not. The
-// first is the one that can happen — a byte-order mark carried into a JSON
-// string argument would make a patch parse here and be refused by Codex — so
-// the charset is spelled out rather than delegated.
-const RUST_SPACE =
-  '\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
-const RUST_LEADING = new RegExp(`^[${RUST_SPACE}]+`, 'u');
-const RUST_TRAILING = new RegExp(`[${RUST_SPACE}]+$`, 'u');
-
-const rustTrim = (text) => text.replace(RUST_LEADING, '').replace(RUST_TRAILING, '');
+const bodyMarker = (line) => (line === undefined ? undefined : rustTrimEnd(line));
 
 /**
  * Split a V4A patch envelope into its file operations.

@@ -21,7 +21,8 @@
 //
 // The whole grammar is implemented, `*** Delete File:` and `*** Move to:`
 // included. Those two are the only operations `ctx.fs` has no primitive for —
-// it offers read, write and edit and nothing else — so they run against
+// its mutating surface is `writeText` and `editText`, with no delete and no
+// rename anywhere in the twelve methods `dsh-fs` declares — so they run against
 // `ctx.fs.processPath(target)`, the path the provider itself publishes as
 // "where this file really is, for something outside me to open". Refusing them
 // instead was the first thing tried and it was wrong: the point of this arm is
@@ -55,16 +56,26 @@ import { parsePatch } from './parse-patch.mjs';
 // than a claim in a comment.
 //
 // Why that artifact and not the tool description upstream registers: at this
-// commit `create_apply_patch_freeform_tool` registers a 105-character
+// commit `create_apply_patch_freeform_tool` registers a 108-character
 // description plus `apply_patch.lark` as a grammar the decoder is constrained
 // to. A model on that path cannot emit a malformed envelope. `defineTool` has
 // no freeform or grammar seam — the harness registers JSON function tools and
 // nothing else — so this arm is the unconstrained case, and the file above is
-// upstream's own text for exactly that case: what Codex puts in the system
-// prompt when apply_patch is reached without a grammar. Taking the freeform
-// description instead would give the model 105 characters and no grammar at
-// all, which is not Codex's contract minus a feature but a different and much
-// weaker one.
+// upstream's own prose for exactly that case: the `## apply_patch` section of
+// the base instructions Codex carried when the format had to be taught rather
+// than enforced. Taking the freeform description instead would give the model
+// 108 characters and no grammar at all, which is not Codex's contract minus a
+// feature but a different and much weaker one.
+//
+// What that file is not, at this commit: live. `prompt_with_apply_patch_instructions.md`
+// is referenced only from `core/src/session/tests.rs:1443`, whose four model
+// cases all declare `expects_apply_patch_description: false`, so the assertion
+// never runs; instructions come from `models-manager/models.json`, and none of
+// its eight templates carries the section. Upstream now conveys the format
+// through the grammar and says only "Use `apply_patch` for local file edits."
+// So no shipped Codex configuration is the one this arm is in, and the choice
+// is between upstream's own retired prose and prose written here. It is the
+// former, unedited but for the three substitutions above.
 //
 // That leaves the tool shape as the one deviation this arm cannot remove, and
 // it is stated as such in ../../../../README.md rather than papered over.
@@ -196,52 +207,68 @@ async function applyOperations(ctx, policy, operations, exec) {
 // Pass one. Reads and computes; writes nothing, and returns nothing but the
 // guarantee that it did not throw.
 async function verifyOperations(ctx, policy, operations, options, exec) {
-  const claimed = new Map();
+  const claimed = new Set();
   for (const operation of operations) {
     const target = await ctx.fs.resolve(operation.path, options);
     // Keyed on the source path alone. Upstream carries `move_path` as a value
     // of the entry, never as a second key (`invocation.rs:232-280`), so a
     // rename onto a path another section also names is not a duplicate here —
     // it is resolved by the order pass two applies in.
-    const key = String(ctx.fs.processPath(target));
-    const existing = claimed.get(key);
-    if (existing !== undefined) {
-      throw new FsError(`multiple operations target ${existing}`, 'FS_IO_ERROR');
+    //
+    // The lexical path, not the provider's target key. Upstream's key is
+    // `hunk.resolve_path(cwd)`, a `PathUri::join` that resolves no symlink,
+    // and `dsh-fs-local` builds its target key from `realpath`. Keying on that
+    // made an envelope naming both a symlink and the file it points at a
+    // duplicate — the reference applies it, both sections in order, confirmed
+    // against the binary.
+    const key = String(target.displayPath ?? ctx.fs.processPath(target));
+    if (claimed.has(key)) {
+      // Upstream names the offending hunk's own path, not the one that claimed
+      // the key first (`invocation.rs:236-240`).
+      throw new FsError(`multiple operations target ${operation.path}`, 'FS_IO_ERROR');
     }
-    claimed.set(key, operation.path);
+    claimed.add(key);
+
+    // Upstream's verify pass does nothing at all for `*** Add File:` — it
+    // records the new contents and moves on (`invocation.rs:246-248`). It does
+    // not stat the path and it does not read it, so neither does this. An
+    // earlier version stated the path here and emitted `fs/observed {present}`
+    // from the result, which told the rest of the harness the file had been
+    // observed when nothing had read it.
+    if (operation.type === 'add_file') continue;
+
+    const deleting = operation.type === 'delete_file';
+    if (deleting) policy.requireDirectFilesystem('`*** Delete File:`');
+    else if (operation.movePath !== undefined) policy.requireDirectFilesystem('`*** Move to:`');
 
     const info = await ctx.fs.stat(target, exec.signal);
-    if (operation.type === 'add_file') {
-      // Codex reads whatever is there, records it as overwritten, and writes
-      // anyway (`lib.rs:493-504`); it has no already-exists refusal. Refusing
-      // was this tool's own invention, and it charged the contract for every
-      // patch where a model rewrites a file from scratch.
-      ctx.emit('fs/observed', target, observed(info), exec);
-      continue;
-    }
-
     if (info === undefined) {
       ctx.emit('fs/observed', target, { kind: 'absent' }, exec);
       throw new FsError(
-        `Cannot ${operation.type === 'delete_file' ? 'delete' : 'update'} ${operation.path}: it does not exist.`,
+        `Cannot ${deleting ? 'delete' : 'update'} ${operation.path}: it does not exist.`,
         'FS_NOT_FOUND',
       );
     }
     if (info.type !== 'file') {
       throw new FsError(`${operation.path} is not a regular file`, 'FS_NOT_REGULAR_FILE');
     }
-    ctx.emit('fs/observed', target, observed(info), exec);
 
-    if (operation.type === 'delete_file') {
-      policy.requireDirectFilesystem('`*** Delete File:`');
-      continue;
-    }
-    if (operation.movePath !== undefined) policy.requireDirectFilesystem('`*** Move to:`');
+    // Both branches read. Upstream's delete arm calls `fs.read_file_text` for
+    // its own reasons — it records the removed content for the diff it shows —
+    // and `read_file_text` maps invalid UTF-8 to `InvalidData`
+    // (`file-system/src/lib.rs:434-443`), so a delete of a binary file refuses
+    // the whole envelope there. Statting alone applied it here.
+    //
+    // The read is also what makes the observation below true: a stat
+    // establishes that something is present, not that this tool has seen it.
+    const before = await ctx.fs.readText(target, exec.signal);
+    ctx.emit('fs/observed', target, observed(info), exec);
+    if (deleting) continue;
 
     // Where a mismatched hunk fails, before anything is on disk. The message
     // already names the file and quotes the lines it could not place, which is
     // what the model has to rewrite.
-    deriveOrThrow(await ctx.fs.readText(target, exec.signal), operation);
+    deriveOrThrow(before, operation);
   }
 }
 
@@ -256,11 +283,19 @@ async function applySequentially(ctx, policy, operations, run) {
     // cancelled turn should stop between operations rather than run the rest of
     // the envelope. Upstream is sequential too, so stopping here leaves the same
     // partial state a failed operation would.
-    exec.signal?.throwIfAborted();
+    // `throwIfAborted` raises a bare `AbortError` DOMException. Every provider
+    // call translates an abort into `FsError('FS_ABORTED')`, and the window
+    // between two operations should not be the one place that does not.
+    if (exec.signal?.aborted) throw new FsError('apply_patch aborted', 'FS_ABORTED');
     const target = await ctx.fs.resolve(operation.path, options);
     const info = await ctx.fs.stat(target, exec.signal);
 
     if (operation.type === 'add_file') {
+      // A stat establishes an absence, so that much is observed and emitted.
+      // The other branch is deliberately silent: nothing here reads a file the
+      // add is about to overwrite, and saying `present` on the strength of a
+      // stat would tell an observation policy the file had been seen.
+      if (info === undefined) ctx.emit('fs/observed', target, { kind: 'absent' }, exec);
       await writeTarget(ctx, policy, { target, content: operation.contents, info }, run);
       affected.A.push(operation.path);
       continue;
@@ -277,7 +312,7 @@ async function applySequentially(ctx, policy, operations, run) {
     }
 
     if (operation.type === 'delete_file') {
-      await removeFile(ctx, target);
+      await removeFile(ctx, target, operation.path);
       ctx.emit('fs/observed', target, { kind: 'absent' }, exec);
       affected.D.push(operation.path);
       continue;
@@ -305,7 +340,7 @@ async function applySequentially(ctx, policy, operations, run) {
     // behaviour for `*** Move to:` naming its own source and is reproduced here
     // rather than refused.
     await writeTarget(ctx, policy, { target: destination, content, unconditional: true }, run);
-    await removeFile(ctx, target);
+    await removeFile(ctx, target, operation.path);
     ctx.emit('fs/observed', target, { kind: 'absent' }, exec);
     // A rename is reported as a modification of its destination, the way
     // `AffectedPaths` records it (`lib.rs:634`).
@@ -336,27 +371,13 @@ function deriveOrThrow(before, operation) {
 
 async function writeTarget(ctx, policy, { target, content, info, unconditional }, run) {
   const { sandboxPolicy, exec } = run;
-  const creating = info === undefined;
-  // The two waterfalls do not return the same shape. `fs/write-intent` yields
-  // an `FsWriteIntent`, guard and all; `fs/edit-intent` yields `{version}` and
-  // no `kind` (`dsh-fs/lib/types/index.d.ts:36-42`), so passing it straight to
-  // `writeText` matched neither guard and wrote unconditionally — a decider's
-  // version check was accepted and then dropped on the floor.
-  const intent = creating
-    ? await ctx.waterfall('fs/write-intent', target, exec, () => ({ kind: 'createIfAbsent' }))
-    : await ctx
-        .waterfall('fs/edit-intent', target, exec, () => undefined)
-        .then((edit) =>
-          edit === undefined ? undefined : { kind: 'replaceIfVersion', version: edit.version },
-        );
-  // A move's guard would belong to the source file's version, which the
-  // destination does not have.
-  const expected = unconditional
-    ? undefined
-    : (intent ??
-      (creating
-        ? { kind: 'createIfAbsent' }
-        : { kind: 'replaceIfVersion', version: info.version }));
+  // A move's destination is written unconditionally: Codex overwrites whatever
+  // is there rather than refusing, and the only guard this tool holds belongs
+  // to the source file's version, which the destination does not have. So no
+  // decider is consulted either. An earlier version ran the `fs/write-intent`
+  // waterfall here and then discarded its answer, which turned a decider's
+  // refusal to clobber into a silent overwrite.
+  const expected = unconditional ? undefined : await resolveIntent(ctx, target, info, exec);
 
   let outcome;
   try {
@@ -365,6 +386,21 @@ async function writeTarget(ctx, policy, { target, content, info, unconditional }
     throw policy.mapError(error, sandboxPolicy);
   }
   ctx.emit('fs/observed', target, { kind: 'present', version: outcome.version }, exec);
+}
+
+// The two waterfalls do not return the same shape. `fs/write-intent` yields an
+// `FsWriteIntent`, guard and all; `fs/edit-intent` yields `{version}` and no
+// `kind` (`dsh-fs/lib/types/index.d.ts:36-42`), so passing it straight to
+// `writeText` matched neither guard and wrote unconditionally — a decider's
+// version check was accepted and then dropped on the floor.
+async function resolveIntent(ctx, target, info, exec) {
+  if (info === undefined) {
+    return ctx.waterfall('fs/write-intent', target, exec, () => ({ kind: 'createIfAbsent' }));
+  }
+  const edit = await ctx.waterfall('fs/edit-intent', target, exec, () => undefined);
+  return edit === undefined
+    ? { kind: 'replaceIfVersion', version: info.version }
+    : { kind: 'replaceIfVersion', version: edit.version };
 }
 
 const observed = (info) =>
@@ -385,8 +421,19 @@ const observed = (info) =>
 // missing path here means it went away underneath the turn. Codex's `fs.remove`
 // reports that; swallowing it would report `D <path>` for a delete that did not
 // happen.
-function removeFile(ctx, target) {
-  return rm(String(target.displayPath ?? ctx.fs.processPath(target)), { force: false });
+// Whatever `rm` raises is a bare `Error` carrying an errno and the resolved
+// host path. Every other failure this tool can produce is an `FsError` whose
+// `code` routes without parsing a message, and whose message names the path the
+// model itself wrote; a raw `EACCES: permission denied, unlink /var/folders/...`
+// is neither.
+async function removeFile(ctx, target, path) {
+  try {
+    await rm(String(target.displayPath ?? ctx.fs.processPath(target)), { force: false });
+  } catch (error) {
+    throw new FsError(`Cannot delete ${path}: ${error.code ?? error.message}`, 'FS_IO_ERROR', {
+      cause: error,
+    });
+  }
 }
 
 function presentApplyPatchCall(args) {

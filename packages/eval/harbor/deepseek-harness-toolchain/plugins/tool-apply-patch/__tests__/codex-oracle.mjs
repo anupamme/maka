@@ -492,6 +492,32 @@ export const cases = [
     // accepted this patch and Codex refuses it.
     patch: `﻿${P('*** Update File: a.txt', '@@', '-old', '+new')}`,
   },
+  // The same two code points again, this time in the file rather than in the
+  // envelope, which is where `seek_sequence`'s three loose passes see them.
+  // These are the cases that caught the applier still using JavaScript's
+  // `trim`: the first was accepted here and refused by the reference — and the
+  // file was then written back with the mark deleted — and the second was
+  // refused here and applied by the reference.
+  {
+    name: 'byte-order mark at the head of the file being patched',
+    files: { 'a.txt': '\ufeffimport os\nimport sys\n' },
+    patch: P('*** Update File: a.txt', '@@', ' import os', '+import json'),
+  },
+  {
+    // U+0085 alone does not separate the passes: the fourth folds it away too,
+    // so trim and fold agree. A trailing U+FEFF does separate them — Rust's
+    // `trim_end` keeps it, JavaScript's cuts it, and it is not in the
+    // punctuation table — which makes this the case that tells the applier's
+    // three loose passes apart.
+    name: 'a line the file terminates with U+FEFF',
+    files: { 'a.txt': 'import os\ufeff\nimport sys\n' },
+    patch: P('*** Update File: a.txt', '@@', '-import os', '+IMPORT'),
+  },
+  {
+    name: 'a line the file terminates with U+0085',
+    files: { 'f.txt': 'gamma\u0085\ndelta\n' },
+    patch: P('*** Update File: f.txt', '@@', '-gamma', '+GAMMA'),
+  },
 ];
 
 const run = promisify(execFile);

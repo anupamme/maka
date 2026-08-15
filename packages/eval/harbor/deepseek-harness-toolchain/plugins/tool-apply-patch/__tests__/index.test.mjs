@@ -8,7 +8,7 @@
 // confining provider forces.
 
 import { strict as assert } from 'node:assert';
-import { rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { harness } from './test-harness.mjs';
@@ -341,5 +341,214 @@ describe('apply_patch under a confining provider', () => {
     // to guard and this asserts the behaviour that replaced it.
     await run(patch('*** Add File: sub/dir/x.txt', '+x'));
     assert.equal(await read('sub/dir/x.txt'), 'x\n');
+  });
+});
+
+// The seam between this tool and the provider: the guards it hands to
+// `writeText`, the deciders it consults, the signal it carries, and the
+// vocabulary its failures arrive in.
+//
+// This block exists because none of it was covered. Replacing both waterfall
+// calls with `undefined`, dropping the signal and the sandbox policy from the
+// `writeText` call, and forcing the move destination's observation to `absent`
+// each left the whole suite green.
+describe('apply_patch at the provider seam', () => {
+  const two = { 'a.txt': 'a\n', 'dest.txt': 'PRECIOUS\n' };
+  const move = patch('*** Update File: a.txt', '*** Move to: dest.txt', '@@', '-a', '+A');
+
+  it('consults no decider for a move destination it will overwrite anyway', async () => {
+    // Asking `fs/write-intent` and then discarding the answer is worse than not
+    // asking: a decider that refuses to clobber is recorded as consulted and
+    // the file is overwritten regardless. The destination write is
+    // unconditional by Codex's own semantics, so nothing is asked.
+    const mounted = await harness({
+      files: two,
+      deciders: { 'fs/write-intent': () => ({ kind: 'createIfAbsent' }) },
+    });
+    try {
+      await mounted.run(move);
+      // Not one waterfall: the source is removed rather than written, and the
+      // destination write is unconditional.
+      assert.deepEqual(mounted.asked, []);
+      assert.deepEqual(mounted.intents, ['unconditional']);
+      assert.equal(await mounted.read('dest.txt'), 'A\n');
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('hands an edit decider its own version, not the one it read', async () => {
+    const mounted = await harness({
+      files: { 'a.txt': 'a\n' },
+      deciders: { 'fs/edit-intent': () => ({ version: 'not-the-current-one' }) },
+    });
+    try {
+      await assert.rejects(
+        mounted.run(patch('*** Update File: a.txt', '@@', '-a', '+A')),
+        (error) => error.code === 'FS_STALE_VERSION',
+      );
+      assert.deepEqual(mounted.intents, ['replaceIfVersion']);
+      assert.equal(await mounted.read('a.txt'), 'a\n');
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('carries the turn signal and the sandbox policy into every write', async () => {
+    const signal = AbortSignal.timeout(600000);
+    const mounted = await harness({
+      files: { 'a.txt': 'a\n' },
+      sandboxMode: 'danger-full-access',
+      signal,
+    });
+    try {
+      await mounted.run(patch('*** Update File: a.txt', '@@', '-a', '+A'));
+      assert.equal(mounted.guards.length, 1);
+      assert.equal(mounted.guards[0].signal, signal);
+      assert.deepEqual(mounted.guards[0].sandboxPolicy, { mode: 'danger-full-access' });
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('stops between operations when the turn is aborted, in the seam vocabulary', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const mounted = await harness({ files: { 'a.txt': 'a\n' }, signal: controller.signal });
+    try {
+      await assert.rejects(
+        mounted.run(patch('*** Add File: b.txt', '+b')),
+        (error) => error.code === 'FS_ABORTED',
+      );
+      assert.equal(await mounted.exists('b.txt'), false);
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses the whole envelope when a file it would delete is not text', async () => {
+    // Upstream's verify pass reads a delete target — `read_file_text`, which
+    // maps invalid UTF-8 to `InvalidData` (`invocation.rs:249`,
+    // `file-system/src/lib.rs:434-443`) — so a binary file refuses the envelope
+    // before anything is written. Statting it instead applied the delete.
+    const mounted = await harness({ files: { 'a.txt': 'a\n' } });
+    try {
+      await writeFile(join(mounted.root, 'blob.bin'), Buffer.from([0xff, 0xfe, 0x00, 0x41]));
+      await assert.rejects(
+        mounted.run(patch('*** Delete File: blob.bin', '*** Update File: a.txt', '@@', '-a', '+A')),
+        (error) => error.code === 'FS_NOT_TEXT',
+      );
+      assert.equal(await mounted.exists('blob.bin'), true);
+      assert.equal(await mounted.read('a.txt'), 'a\n');
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not claim to have observed a file it never read', async () => {
+    // `*** Add File:` over an existing path. Upstream's verify pass does not
+    // stat it and does not read it; emitting `present` off a stat told an
+    // observation policy the file had been seen, and it is exactly such a
+    // policy that would otherwise refuse the blind overwrite.
+    const mounted = await harness({ files: { 'a.txt': 'PRECIOUS\n' } });
+    try {
+      await mounted.run(patch('*** Add File: a.txt', '+new'));
+      assert.deepEqual(mounted.events, [['fs/observed', 'a.txt', 'present']]);
+      assert.deepEqual(mounted.asked, ['fs/edit-intent']);
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('records what a rename is about to replace', async () => {
+    // The one case `observed(stat(destination))` exists for. Every other test
+    // moves onto an absent path, where a forced `{kind:'absent'}` is
+    // indistinguishable from reading the destination.
+    const mounted = await harness({ files: two });
+    try {
+      await mounted.run(move);
+      assert.deepEqual(mounted.events, [
+        ['fs/observed', 'a.txt', 'present'],
+        ['fs/observed', 'dest.txt', 'present'],
+        ['fs/observed', 'dest.txt', 'present'],
+        ['fs/observed', 'a.txt', 'absent'],
+      ]);
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a delete of a file that went away underneath the turn', async () => {
+    // `force: false` is only observable against a file that disappears between
+    // the stat that found it and the unlink that acts on that answer. With
+    // `force: true` the turn reports `D b.txt` for a delete it did not perform.
+    let mounted;
+    let stats = 0;
+    mounted = await harness({
+      files: { 'b.txt': 'b\n' },
+      // Pass one stats and reads it; the file goes away after pass two's stat,
+      // which is the answer the unlink acts on.
+      afterStat: async (target) => {
+        if (target.displayPath.endsWith('b.txt') && (stats += 1) === 2) {
+          await rm(join(mounted.root, 'b.txt'));
+        }
+      },
+    });
+    try {
+      await assert.rejects(
+        mounted.run(patch('*** Delete File: b.txt')),
+        (error) =>
+          error.code === 'FS_IO_ERROR' && /^Cannot delete b\.txt: ENOENT$/.test(error.message),
+      );
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a failed unlink in the seam vocabulary, naming the path the model wrote', async () => {
+    const mounted = await harness({ files: { 'keep/x.txt': 'x\n' } });
+    try {
+      await chmod(join(mounted.root, 'keep'), 0o555);
+      await assert.rejects(mounted.run(patch('*** Delete File: keep/x.txt')), (error) => {
+        assert.equal(error.code, 'FS_IO_ERROR');
+        assert.match(error.message, /^Cannot delete keep\/x\.txt: EACCES$/);
+        return true;
+      });
+    } finally {
+      await chmod(join(mounted.root, 'keep'), 0o755).catch(() => {});
+      await rm(mounted.root, { recursive: true, force: true });
+    }
+  });
+
+  it('keys the duplicate check lexically, as upstream does, and names the offender', async () => {
+    // `PathUri::join` resolves no symlink, so upstream sees two distinct keys
+    // here and applies both sections in order — confirmed against the binary.
+    // Keying on the provider's realpath-derived target key refused it.
+    const mounted = await harness({ files: { 'a.txt': 'alpha\nbeta\n' } });
+    try {
+      await symlink('a.txt', join(mounted.root, 'link.txt'));
+      await mounted.run(
+        patch(
+          '*** Update File: a.txt',
+          '@@',
+          '-alpha',
+          '+ALPHA',
+          '*** Update File: link.txt',
+          '@@',
+          '-beta',
+          '+BETA',
+        ),
+      );
+      assert.equal(await mounted.read('a.txt'), 'ALPHA\nBETA\n');
+
+      await assert.rejects(
+        mounted.run(
+          patch('*** Update File: a.txt', '@@', '-ALPHA', '+X', '*** Delete File: a.txt'),
+        ),
+        (error) => error.message === 'multiple operations target a.txt',
+      );
+    } finally {
+      await rm(mounted.root, { recursive: true, force: true });
+    }
   });
 });

@@ -31,13 +31,15 @@ import { apply } from '../index.mjs';
  *   tree: () => Promise<Record<string, string>>,
  * }>}
  */
-export async function harness({ files = {}, sandboxMode } = {}) {
+export async function harness({ files = {}, sandboxMode, deciders = {}, signal, afterStat } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'maka-apply-patch-'));
   const events = [];
   const intents = [];
+  const asked = [];
+  const guards = [];
   for (const [path, content] of Object.entries(files)) {
     await mkdir(dirname(join(root, path)), { recursive: true });
-    await writeFile(join(root, path), content);
+    await writeFile(join(root, path), content, typeof content === 'string' ? 'utf8' : undefined);
   }
 
   // `dsh-fs-local` splits these two: `displayPath` is the lexical
@@ -60,20 +62,51 @@ export async function harness({ files = {}, sandboxMode } = {}) {
         assert.equal(options.cwd, root, 'the session cwd must reach the provider');
         return target(isAbsolute(path) ? path : resolve(options.cwd, path));
       },
-      stat: async ({ targetKey }) => {
+      stat: async (target) => {
+        const { targetKey } = target;
         const info = await stat(targetKey).catch(() => undefined);
+        // The one thing a real filesystem does that an in-process fake cannot:
+        // change underneath a turn. `afterStat` opens exactly the window
+        // between a stat and the syscall that acts on its answer, which is the
+        // only window in which `rm`'s `force` flag is observable at all.
+        await afterStat?.(target);
         if (info === undefined) return undefined;
-        return {
-          type: info.isDirectory() ? 'directory' : 'file',
-          version: `${info.size}:${info.mtimeMs}`,
-        };
+        // `dsh-fs-local` reports three kinds, not two: a FIFO or a device is
+        // `other`, and the tool's `info.type !== 'file'` guards are untestable
+        // against a fake that calls everything a file.
+        const type = info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other';
+        return { type, version: `${info.size}:${info.mtimeMs}` };
       },
-      readText: ({ targetKey }) => readFile(targetKey, 'utf8'),
+      // `dsh-fs-local` `readWholeText` rejects a NUL in the first sample bytes
+      // and decodes with `new TextDecoder('utf-8', {fatal: true})`, so a binary
+      // or invalid-UTF-8 file raises `FS_NOT_TEXT` rather than arriving with
+      // U+FFFD where a byte used to be. Reading it as lossy UTF-8 here meant a
+      // fixture could pin corrupted output as correct.
+      readText: async ({ targetKey }) => {
+        const raw = await readFile(targetKey);
+        if (raw.subarray(0, 8192).includes(0)) {
+          throw new FsError(`cannot read ${targetKey}: binary file`, 'FS_NOT_TEXT');
+        }
+        try {
+          return new TextDecoder('utf-8', { fatal: true }).decode(raw);
+        } catch (cause) {
+          throw new FsError(`cannot read ${targetKey}: not text`, 'FS_NOT_TEXT', { cause });
+        }
+      },
       // The write guards `dsh-fs-local` enforces, enforced here too. A fake that
       // records the guard and writes anyway would pass whatever guard this tool
       // passed it, including none.
-      writeText: async ({ targetKey }, content, expected) => {
+      //
+      // The signal and the sandbox policy are recorded rather than ignored:
+      // dropping either from the call is invisible to a three-parameter fake,
+      // and both were dropped at some point without a test noticing.
+      writeText: async ({ targetKey }, content, expected, writeSignal, sandboxPolicy) => {
         intents.push(expected === undefined ? 'unconditional' : expected.kind);
+        guards.push({ signal: writeSignal, sandboxPolicy });
+        const existing = await stat(targetKey).catch(() => undefined);
+        if (existing !== undefined && !existing.isFile()) {
+          throw new FsError(`${targetKey} is not a regular file`, 'FS_NOT_REGULAR_FILE');
+        }
         const current = await version(targetKey);
         if (expected?.kind === 'createIfAbsent' && current !== undefined) {
           throw new FsError(`${targetKey} already exists`, 'FS_NOT_OBSERVED');
@@ -94,13 +127,21 @@ export async function harness({ files = {}, sandboxMode } = {}) {
     get: () => (sandboxMode === undefined ? undefined : { resolve: () => ({ mode: sandboxMode }) }),
     emit: (event, subject, observation) =>
       events.push([event, subject.displayPath.slice(root.length + 1), observation.kind]),
-    waterfall: async (_event, _target, _exec, fallback) => fallback(),
+    // A waterfall that only ever calls the fallback cannot observe a decider's
+    // answer being asked for and then thrown away, which is what happened on
+    // the move-destination path. `deciders` installs one, and `asked` records
+    // every event the tool consulted whether a decider answered or not.
+    waterfall: async (event, target, _exec, fallback) => {
+      asked.push(event);
+      const decider = deciders[event];
+      return decider === undefined ? fallback() : decider(target);
+    },
     tools: { register: (tool) => registered.push(tool) },
   };
   apply(ctx, {});
 
   const [tool] = registered;
-  const exec = { signal: undefined, agent: { session: { header: { cwd: root } } } };
+  const exec = { signal, agent: { session: { header: { cwd: root } } } };
   const walk = async (dir, out) => {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       const path = join(dir, entry.name);
@@ -114,6 +155,8 @@ export async function harness({ files = {}, sandboxMode } = {}) {
     root,
     events,
     intents,
+    asked,
+    guards,
     tool,
     run: (input) => tool.execute({ input }, exec),
     read: (path) => readFile(join(root, path), 'utf8'),
