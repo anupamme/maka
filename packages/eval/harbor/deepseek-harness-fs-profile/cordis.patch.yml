@@ -197,35 +197,52 @@
         # the budget (`:101-112`).
         #
         # Measured, not asserted: `node packages/eval/scripts/measure-read-budget.mjs`
-        # reimplements both renderers from the shipped code and reports the
-        # residual over every tracked TS/JS/Python source. At 16000 over 2195
-        # files this arm delivers 1.093x the lines and 1.009x the characters.
+        # reports the residual over every tracked TS/JS/Python source, and
+        # `--self-check <dir>` verifies both of its renderers against the
+        # shipped packages installed under <dir> rather than trusting the
+        # transcription. At 16000 over 2197 files this arm delivers 1.093x the
+        # lines and 1.001x the characters.
         #
-        # Both tails, because only one of them was quoted before and it was the
-        # flattering one. The most fs-favourable file is 1.332x lines
-        # (packages/core/src/__tests__/tool-recovery-authority.test.ts) and
-        # 1.186x characters; the least is 0.837x lines and 0.730x characters
-        # (apps/desktop/src/renderer/locales/settings-provider-copy.ts), where
+        # Both tails, among the 570 files where a budget binds for some arm —
+        # the ratio is 1.000 for the rest, so a corpus-wide extreme would be a
+        # file no budget touched. Most fs-favourable: 1.398x lines
+        # (packages/ui/src/bot-brand-logo.tsx) and, on a different file, 1.168x
+        # characters. Least: 0.837x lines and 0.720x characters, both
+        # apps/desktop/src/renderer/locales/settings-provider-copy.ts, where
         # non-ASCII text costs UTF-8 bytes against the baseline's UTF-16 code
-        # units. So the residual runs in this arm's favour on balance and
-        # against it on non-ASCII files. Equalising delivered content instead
-        # would mean choosing a budget from an assumed average line length,
-        # which is a larger free parameter than the few percent above.
+        # units. Equalising delivered content instead would mean choosing a
+        # budget from an assumed average line length, which is a larger free
+        # parameter than the few percent above.
         #
         # The remaining read-side asymmetry, that the patch arm has no read tool
-        # at all, is contract-inherent and stays. Codex registers no file-read
-        # tool either — its handler set is shell, apply_patch, plan and image
-        # tools — so an arm that reads through bash is that contract, not a
-        # handicap applied to it. Every arm has the same bash.
+        # at all, is contract-inherent and stays. Codex registers no tool that
+        # reads file text either — files are read through its shell, and its one
+        # path-taking read tool, `view_image`, takes images — so an arm that
+        # reads with `cat` is that contract, not a handicap applied to it. Every
+        # arm has the same bash, at the same 16000-character output cap.
         readMaxBytes: 16000
-        # The other cap that binds. Left at its shipped 2000 this arm could
-        # never see the 2001st character of any line, at any offset, while the
-        # baseline has no per-line cap at all and can spend the whole budget on
-        # one line — a minified bundle, a single-line JSON payload, a long log
-        # record. That is not a difference in edit contract, it is a hole in
-        # this arm's read tool, so it is raised to the budget, where it can no
-        # longer bind before `readMaxBytes` does.
-        readMaxLineLength: 16000
+        # The other cap, left at the value the tool ships with.
+        #
+        # Raising it to the budget looked like the fix and was much worse.
+        # `truncateLine` appends a `... (line truncated to N chars)` marker and
+        # `consumeLine` charges the whole thing against `readMaxBytes`, so once
+        # the cap approaches the budget a long line no longer fits at all: the
+        # window returns **zero** lines, drops every line after it, and the
+        # footer invites the model to retry at the offset it just used. No value
+        # equalises the two budgets either, because one counts UTF-16 code units
+        # and the other UTF-8 bytes, so the largest safe cap depends on the
+        # encoding of the line rather than on a number set here.
+        #
+        # At the shipped 2000 the direction is not the one it looks like.
+        # Measured on a 20000-character line followed by 200 short lines, the
+        # baseline delivers 1 line and 16240 characters while this arm delivers
+        # 201 lines and 4689: the baseline spends its whole budget on the long
+        # line and never reaches the rest of the file, while this arm truncates
+        # the line, says so, and reads on. Across the whole corpus no file makes
+        # this arm return nothing where the baseline returns something. So the
+        # cap stays put, and the script reports that synthetic case on every run
+        # rather than leaving it to a corpus that contains no long lines.
+        readMaxLineLength: 2000
 
     - id: sessions
       name: '@deepseek-ai/dsh-session-persistence-jsonl'

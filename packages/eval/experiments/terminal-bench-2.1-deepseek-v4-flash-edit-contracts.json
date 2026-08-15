@@ -60,7 +60,7 @@
     }
   },
   "execution": {
-    "maxConcurrentTaskGroups": 43
+    "maxConcurrentTaskGroups": 42
   },
   "subjects": [
     {

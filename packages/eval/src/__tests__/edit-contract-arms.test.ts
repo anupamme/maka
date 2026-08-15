@@ -47,12 +47,12 @@ const EDIT_CONTRACT_ROWS: Readonly<Record<keyof typeof ARMS, readonly Entry[]>> 
   ],
   'deepseek-harness-fs': [
     // Matched to the baseline's output budget: the size of a read is not part
-    // of the contract, and the shipped defaults are 51200 bytes and a 2000
-    // character per-line cap the baseline does not have at all.
+    // of the contract, and the shipped default is 51200 bytes. The per-line cap
+    // is left where the tool ships it — see the assertion below for why.
     {
       id: 'fs-tools',
       name: '@deepseek-ai/dsh-tool-fs',
-      config: { readMaxBytes: 16000, readMaxLineLength: 16000 },
+      config: { readMaxBytes: 16000, readMaxLineLength: 2000 },
     },
   ],
   'deepseek-harness-apply-patch': [
@@ -244,6 +244,31 @@ test('the settings that are not the variable are identical across the arms', asy
   }
 });
 
+test('the fs arm cannot be starved by its own per-line cap', async () => {
+  // The invariant, not the number. `dsh-tool-fs` truncates a long line and
+  // appends `... (line truncated to N chars)`, then charges the whole thing
+  // against `readMaxBytes`. If a truncated line plus that marker cannot fit,
+  // the line is not delivered at all AND every line after it is dropped, and
+  // the footer tells the model to retry at the offset it just used — so the
+  // rest of the file becomes unreachable rather than merely abbreviated.
+  //
+  // Raising the cap to the budget was tried and produced exactly that. This
+  // asserts the property rather than the value, so any future cap has to be one
+  // that still fits. Three bytes per UTF-16 code unit is the worst case for a
+  // BMP character such as CJK; an astral character is two units and four bytes,
+  // which is cheaper per unit.
+  const composed = entries(await read(ARMS['deepseek-harness-fs'], 'cordis.patch.yml'));
+  const config = composed.find((entry) => entry.id === 'fs-tools')?.config as {
+    readMaxBytes: number;
+    readMaxLineLength: number;
+  };
+  const marker = `... (line truncated to ${config.readMaxLineLength} chars)`.length;
+  assert.ok(
+    config.readMaxLineLength * 3 + marker <= config.readMaxBytes,
+    `a truncated line (${config.readMaxLineLength} units) plus its ${marker}-character marker can exceed readMaxBytes (${config.readMaxBytes}), which returns an empty window no offset recovers`,
+  );
+});
+
 test('the arms are pinned to one toolchain identity', async () => {
   const identities = Object.keys(ARMS).map((arm) => TOOLCHAIN_IDENTITIES[arm as keyof typeof ARMS]);
   for (const identity of identities) {
@@ -270,16 +295,17 @@ test('the experiment runs the three arms against one another', async () => {
   };
 
   // A task group holds one cell per subject and the runner starts the whole
-  // group at once, so the host load is groups times arms. Every other spec in
-  // this directory lands on 128 concurrent trials — 1x128, 2x64, 8x16 — and
-  // this one ran at 192 until it was noticed. That does not bias one arm
-  // against another, since the contention is shared inside each group, but it
-  // does mean an arm's score here cannot be put beside the same arm's score
-  // from a single-arm spec, and the CPU-bound tasks in this suite have a
-  // 65-minute deadline to run into.
+  // group at once, so the host load is groups times arms. The three specs in
+  // this directory that saturate the host land on exactly 128 concurrent
+  // trials — 1x128, 2x64, 8x16; the four-arm spec runs one group at a time and
+  // is not in that family — and this one ran at 192 until it was noticed. That
+  // does not bias one arm against another, since the contention is shared
+  // inside each group, but it does mean an arm's score here cannot be put
+  // beside the same arm's score from a single-arm spec, and the CPU-bound tasks
+  // in this suite have a 65-minute deadline to run into.
   const groups = experiment.execution?.maxConcurrentTaskGroups ?? 1;
   assert.ok(
-    groups * experiment.subjects.length <= 129,
+    groups * experiment.subjects.length <= 128,
     `${groups} groups x ${experiment.subjects.length} arms exceeds the 128-trial convention`,
   );
 
