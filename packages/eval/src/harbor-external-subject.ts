@@ -43,6 +43,31 @@ function isDeepSeekHarness(profile: Profile): boolean {
   return Object.hasOwn(DEEPSEEK_HARNESS_ARMS, profile);
 }
 
+// The tail of a subject's stderr that is kept as an artifact rather than only
+// counted and hashed.
+//
+// Counting it alone was enough to know that a failing arm had said something
+// and not enough to read it, which is the difference between diagnosing a
+// failure from the run's own output and reproducing it by hand on the host that
+// produced it. Both failures this file has had — a composition the harness
+// could not load, and a subject that exited after one model response — landed
+// as a byte count and a digest.
+//
+// A tail rather than the whole stream, because a subject that loops printing is
+// a subject whose stderr would otherwise fill the trial's disk, and because a
+// harness reports what killed it on the way out. The byte count and digest
+// still describe the whole stream, so a truncated tail is visible as such.
+//
+// Written and not announced in the result frame. `/logs/agent` is collected
+// into the trial directory already, so the file arrives either way, while the
+// frame's payload is capped at 2 KiB by the relay — a cap these arms sit close
+// enough to that one more artifact entry turned every cell into
+// `external subject result transport failed`.
+const STDERR_TAIL_BYTES = 64 * 1024;
+
+// Declared here rather than beside its reader: this module runs its work at
+// the top level, above that function, so a `const` declared there is still in
+// its temporal dead zone when the subject's stderr is first read.
 const PROVIDER_USAGE_CHECKPOINT_SCHEMA = 'maka.external_provider_usage.v2';
 let atomicWriteSequence = 0;
 
@@ -616,28 +641,6 @@ async function classifyStream(input: Readable, selected: Profile): Promise<Class
     nonempty,
   };
 }
-
-// The tail of a subject's stderr that is kept as an artifact rather than only
-// counted and hashed.
-//
-// Counting it alone was enough to know that a failing arm had said something
-// and not enough to read it, which is the difference between diagnosing a
-// failure from the run's own output and reproducing it by hand on the host that
-// produced it. Both failures this file has had — a composition the harness
-// could not load, and a subject that exited after one model response — landed
-// as a byte count and a digest.
-//
-// A tail rather than the whole stream, because a subject that loops printing is
-// a subject whose stderr would otherwise fill the trial's disk, and because a
-// harness reports what killed it on the way out. The byte count and digest
-// still describe the whole stream, so a truncated tail is visible as such.
-//
-// Written and not announced in the result frame. `/logs/agent` is collected
-// into the trial directory already, so the file arrives either way, while the
-// frame's payload is capped at 2 KiB by the relay — a cap these arms sit close
-// enough to that one more artifact entry turned every cell into
-// `external subject result transport failed`.
-const STDERR_TAIL_BYTES = 64 * 1024;
 
 async function captureStreamDiagnostic(input: Readable, sink?: string): Promise<StreamDiagnostic> {
   const digest = createHash('sha256');
