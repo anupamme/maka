@@ -12,9 +12,9 @@ This report compares three file-editing tool contracts inside a single agent har
 
 ## TL;DR
 
-- **`str_replace_editor` 56/86, `apply_patch` 56/86, `fs` 53/86. No pair is distinguishable.** The two-tool arms tie exactly; the largest gap is three tasks. Exact McNemar gives p = 1.00, 0.63, and 0.65 for the three comparisons.
-- **The suite's own noise is an order of magnitude larger than any gap.** The three arms disagree on **29 of 86 tasks (33.7%)** while their scores span three. A single run of this suite cannot resolve an effect this small, and this run does not.
-- **The arms fail differently even though they pass equally.** `fs` records nearly twice the verification failures of the baseline (13 against 7) and fewer deadline losses. It produces more answers and more of them are wrong.
+- **`str_replace_editor` 56/86, `apply_patch` 56/86, `fs` 53/86, and this run had no power to separate them.** Exact McNemar gives p = 1.00, 0.63 and 0.65 — but the 95% intervals span roughly ±11 percentage points, so a real advantage of nine or ten tasks would have produced these same results. This is a failure to detect, not a finding of equivalence.
+- **The minimum effect this design could detect is about 13 tasks.** Against the observed three-task spread its power is 7%. The arms disagree on **29 of 86 tasks (33.7%)**, which leaves each comparison only 17 to 22 informative pairs — and with no same-arm repetition, this run cannot say how much of that disagreement is variance and how much is a real per-task effect.
+- **The arms fail differently even where their scores land close.** `fs` records nearly twice the verification failures of the baseline (13 against 7) and fewer deadline losses. It produces more answers and more of them are wrong. This too is underpowered, and it is the one difference large enough to be worth a targeted follow-up.
 - **`fs` costs 13% more for three fewer passes**, at 30% more reasoning tokens. `str_replace_editor` and `apply_patch` are within 1% of each other on every economic measure.
 - **The treatment is a tool family, not a diff format.** The arms differ in tool count, in tool-description length, and in whether guidance lives in the tool or the system prompt. `fs` presents the most tools and the *least* instruction text.
 
@@ -44,17 +44,41 @@ This asymmetry is the reason the treatment cannot be called "the edit contract" 
 
 Harbor raises its agent timeout and then runs the verifier anyway, so exhaustion and failure are two facts about a cell rather than two buckets. Between six and eight exhausted cells per arm still passed. A cell's failure class is therefore "exhausted and unscored" plus "verified and rejected", which is what the last two columns sum to.
 
-## Pairwise significance
+## Pairwise comparison and what it can support
 
 Exact two-sided McNemar over discordant task pairs, with the 86 scored tasks as the paired units. The chi-square form is not usable here — every comparison has fewer than 25 discordant pairs.
 
-| Comparison | A-only | B-only | Discordant | p |
-| --- | ---: | ---: | ---: | ---: |
-| `str_replace_editor` vs `apply_patch` | 11 | 11 | 22 | 1.0000 |
-| `str_replace_editor` vs `fs` | 10 | 7 | 17 | 0.6291 |
-| `fs` vs `apply_patch` | 8 | 11 | 19 | 0.6476 |
+| Comparison | A-only | B-only | Discordant | Net difference | 95% CI | p |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `str_replace_editor` vs `apply_patch` | 11 | 11 | 22 | +0.0 pp | −10.7 to +10.7 pp | 1.000 |
+| `str_replace_editor` vs `fs` | 10 | 7 | 17 | +3.5 pp | −5.9 to +12.9 pp | 0.629 |
+| `fs` vs `apply_patch` | 8 | 11 | 19 | −3.5 pp | −13.4 to +6.4 pp | 0.648 |
 
-Nothing approaches significance. The first row is the clearest statement this run makes: swapping a `str_replace`-style editor for a V4A patch envelope produced 22 tasks that changed outcome and a net difference of exactly zero.
+**No comparison reaches significance, and none of them licenses the conclusion that the contracts perform alike.** The intervals are the honest summary: each is about 22 percentage points wide, so every pair is equally consistent with no difference and with one arm being nine or ten tasks better. A p-value of 1.000 on the first row means the point estimate is exactly zero, not that the two contracts were shown to be equivalent.
+
+### Power
+
+The design's resolution can be stated directly. Given the discordant counts actually observed, the smallest split that would have reached p < 0.05 is:
+
+| Discordant pairs | Split needed | Net tasks needed | Net observed |
+| ---: | ---: | ---: | ---: |
+| 17 | 13 : 4 | 9 | 3 |
+| 19 | 15 : 4 | 11 | 3 |
+| 22 | 17 : 5 | 12 | 0 |
+
+And the power to detect a true effect, at the observed rate of 22 discordant pairs:
+
+| True per-task advantage | Net tasks | Power |
+| ---: | ---: | ---: |
+| 60% of discordant tasks | +4.4 | 0.07 |
+| 70% | +8.8 | 0.31 |
+| 75% | +11.0 | 0.52 |
+| 80% | +13.2 | 0.73 |
+| 85% | +15.4 | 0.90 |
+
+**This run could only reliably detect a difference of roughly 13 tasks or more.** Against differences of the size it actually observed — zero and three tasks — its power is between 3% and 7%. A study that would miss a real effect 93% of the time has not tested for one.
+
+That is a property of the design, not of the contracts. Reaching adequate power for a three-task effect at this discordance rate needs repetitions in the hundreds of paired observations, which means repeated runs rather than a longer task list.
 
 ## The noise floor
 
@@ -64,13 +88,15 @@ Nothing approaches significance. The first row is the clearest statement this ru
 | all three fail | 17 |
 | every other pattern | 29 |
 
-**29 of 86 tasks (33.7%) came out differently on at least one arm.** The six discordant patterns are spread evenly — the largest is six tasks — which is what one expects from independent per-task coin flips, not from a systematic contract effect.
+**29 of 86 tasks (33.7%) came out differently on at least one arm.** The six discordant patterns are spread evenly, the largest being six tasks.
 
-This is the number that governs how the rest of the report should be read. A three-task spread between arms is well inside a regime where a third of the suite is decided by run-to-run variation. Establishing an effect of this size would need repetitions, not more tasks.
+This number governs the rest of the report, because it is what leaves each comparison with only 17 to 22 paired observations that carry any information. It does not, by itself, say what the disagreement is made of. **This run cannot separate per-task variance from a genuine per-task contract effect, because it has no same-arm repetition.** An arm re-run against itself might disagree with itself on a similar fraction of tasks, or on far fewer; nothing here measures that. The one prior experiment on this suite that did repeat an identically configured arm saw 19% of its tasks flip between runs, which suggests much of this 33.7% is variance — but that was a different harness and is evidence by analogy, not by measurement.
+
+Either way the consequence for this design is the same: at ~20 discordant pairs per comparison, an effect worth fewer than about a dozen tasks is not detectable. Fixing that needs repetitions, not a longer task list — and a same-arm repetition is the single cheapest addition, because it would also tell us which part of the 33.7% is noise.
 
 ## Where the arms actually differ
 
-Equal scores conceal unequal failure modes.
+Close scores conceal unequal failure modes.
 
 | Diagnostic | `str_replace_editor` | `fs` | `apply_patch` |
 | --- | ---: | ---: | ---: |
@@ -85,7 +111,7 @@ Equal scores conceal unequal failure modes.
 
 `apply_patch` has the fastest median cell by 200 seconds against the baseline while landing on the identical score. Its mean matches the others exactly, so the gain is in the middle of the distribution, not in the tail.
 
-None of these differences is significant on its own, and this run does not establish a cause for any of them.
+None of these differences is significant on its own, and this run does not establish a cause for any of them. They are reported because they are the largest signals the run produced and the most economical things for a properly powered follow-up to target — not because the run tested them.
 
 ## Exclusive outcomes
 
@@ -166,10 +192,12 @@ Five of the 89 tasks were scored by a follow-up run rather than the main run: `q
 
 ## Limitations
 
-- One run, one repetition. The measured 33.7% task-level disagreement between arms means this design cannot resolve differences smaller than roughly ten tasks, and the observed differences are three.
+- **This run is underpowered for its own question.** One run, one repetition, ~20 discordant pairs per comparison. Its minimum detectable effect is about 13 tasks; the observed differences are zero and three. Every non-significant result here is a failure to detect, and none of them is evidence that the contracts are equivalent — testing that claim would need an equivalence test against a pre-stated margin, which this design cannot support either.
 - The treatment is a tool family plus its guidance, not an isolated diff format. `fs` differs from the baseline in tool count, in instruction length, and in where the instructions live; no single-variable ablation was run.
+- No arm was run against itself, so the 33.7% task-level disagreement cannot be decomposed into variance and contract effect. A same-arm repetition is the cheapest experiment that would make the rest of this data interpretable.
 - Three tasks are unscored, one of them asymmetrically (`kv-store-grpc`).
 - The two torch tasks are reported as unscored rather than as zeros. Treating them as zeros would be an inference about a verifier that never ran.
-- Pairwise McNemar tests are reported without multiple-comparison correction. None approaches the uncorrected threshold, so correction would not change any conclusion.
+- Pairwise McNemar tests are reported without multiple-comparison correction. None approaches the uncorrected threshold, so correction would only widen intervals that are already too wide to conclude from.
+- The confidence intervals use the Wald form for a paired difference in proportions. At these counts it is approximate; an exact interval would be somewhat wider, which strengthens rather than weakens the conclusion drawn from it.
 - Cost figures are list-price estimates over metered usage for the landed cells only; they are not the account's spend for this experiment.
 - Model conversation traces were not captured. The harness does not persist message history and the task containers are deleted on exit, so the archived evidence is per-cell results, verifier output, subject stderr and token accounting — not trajectories. Capturing trajectories would require the subject wrapper to record request and response bodies, and a re-run.
