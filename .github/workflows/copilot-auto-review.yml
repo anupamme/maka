@@ -1,8 +1,9 @@
 name: Copilot auto review
 
 on:
+  # Review once by default. Add copilot-rereview for an explicit follow-up review.
   pull_request_target:
-    types: [opened, reopened, ready_for_review, synchronize]
+    types: [opened, reopened, ready_for_review, labeled]
 
 permissions: {}
 
@@ -15,7 +16,8 @@ jobs:
     if: >-
       github.event.pull_request.draft == false &&
       !endsWith(github.event.pull_request.user.login, '[bot]') &&
-      !contains(github.event.pull_request.labels.*.name, 'copilot-skip')
+      !contains(github.event.pull_request.labels.*.name, 'copilot-skip') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'copilot-rereview')
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
