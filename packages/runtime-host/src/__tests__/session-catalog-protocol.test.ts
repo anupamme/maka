@@ -1,3 +1,4 @@
+import { RuntimeHostProtocolError } from '../protocol/errors.js';
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
@@ -6,7 +7,6 @@ import {
   decodeSessionCatalogItem,
   decodeSessionCatalogQueryResult,
   HOST_OPERATION_SPECS,
-  RuntimeHostProtocolError,
   SESSION_CATALOG_PAGE_MAX_ITEMS,
   type SessionCatalogProjection,
 } from '../protocol/index.js';
@@ -366,6 +366,21 @@ describe('Session catalog protocol', () => {
     );
   });
 
+  test('normalizes legacy Session statuses in catalog projections', () => {
+    for (const status of ['review', 'done']) {
+      const decoded = decodeSessionCatalogItem({ ...projection(), status });
+      if ('kind' in decoded) assert.fail('Expected a Session catalog projection');
+      assert.equal(decoded.status, 'active');
+    }
+  });
+
+  test('rejects unknown Session statuses in catalog projections', () => {
+    assert.throws(
+      () => decodeSessionCatalogItem({ ...projection(), status: 'unknown' }),
+      isInvalidSessionStatus,
+    );
+  });
+
   test('bounds pages and preserves revision-pinned continuation results', () => {
     const sessions = Array.from({ length: SESSION_CATALOG_PAGE_MAX_ITEMS }, (_, index) =>
       projection({ id: `session-${index}` }),
@@ -424,4 +439,8 @@ function projection(overrides: Partial<SessionCatalogProjection> = {}): SessionC
 
 function isProtocolError(error: unknown): boolean {
   return error instanceof RuntimeHostProtocolError;
+}
+
+function isInvalidSessionStatus(error: unknown): boolean {
+  return error instanceof RuntimeHostProtocolError && error.message === 'Invalid Session status';
 }

@@ -499,6 +499,9 @@ if (!alibabaTokenPlanGlobal.api) {
 // the plan's image models (qwen-image / wan) are not tool-callable, so only the
 // tool-calling text models are pinned here. China and global share one model list.
 const alibabaTokenPlanModelIds = [
+  // qwen3.8-max-preview is a retired compatibility alias which the service
+  // routes to this formal id. New selections must use the billed model id.
+  'qwen3.8-max',
   'qwen3.7-max',
   'qwen3.7-plus',
   'qwen3.6-plus',
@@ -1000,7 +1003,6 @@ const providerRegistry = {
     modelDiscovery: {
       kind: 'protocol',
       auth: 'oauth-bearer',
-      filter: 'fallback-models',
     },
     category: 'oauth',
     catalogBadge: 'Account',

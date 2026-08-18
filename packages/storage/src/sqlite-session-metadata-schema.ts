@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-export const SQLITE_SESSION_METADATA_SCHEMA_VERSION = 25;
+export const SQLITE_SESSION_METADATA_SCHEMA_VERSION = 26;
 export const SQLITE_SESSION_MESSAGE_CHUNK_BYTES = 64 * 1024;
 export const SQLITE_SESSION_MESSAGE_CHUNK_MARKER = '{"$maka":"session-message-chunks-v1"}';
 
@@ -900,29 +900,87 @@ const MIGRATIONS: ReadonlyMap<number, string> = new Map([
   [
     25,
     `
-    DROP INDEX session_metadata_by_status;
-
     UPDATE session_metadata
     SET
-      payload_json = CASE
-        WHEN json_extract(payload_json, '$.status') = 'archived'
-          THEN json_remove(
-            json_set(payload_json, '$.status', 'active'),
-            '$.archivedAt',
-            '$.blockedReason',
-            '$.statusUpdatedAt'
-          )
-        ELSE json_remove(payload_json, '$.archivedAt')
+      status = 'active',
+      payload_json = json_set(payload_json, '$.status', 'active'),
+      metadata_version = metadata_version + 1,
+      committed_at = MAX(
+        committed_at,
+        CAST(unixepoch('now', 'subsec') * 1000 AS INTEGER)
+      )
+    WHERE
+      status IN ('review', 'done')
+      OR json_extract(payload_json, '$.status') IN ('review', 'done');
+  `,
+  ],
+  [
+    26,
+    `
+    UPDATE session_metadata
+    SET
+      payload_json = json_set(
+        CASE
+          WHEN json_extract(payload_json, '$.status') = 'archived'
+            THEN json_remove(
+              json_set(payload_json, '$.status', 'active'),
+              '$.archivedAt',
+              '$.blockedReason',
+              '$.statusUpdatedAt'
+            )
+          ELSE json_remove(payload_json, '$.archivedAt')
+        END,
+        '$.isArchived',
+        CASE
+          WHEN
+            json_type(payload_json, '$.isArchived') = 'true'
+            OR json_extract(payload_json, '$.status') = 'archived'
+            OR is_archived = 1
+            OR status = 'archived'
+            OR json_type(payload_json, '$.archivedAt') IS NOT NULL
+          THEN json('true')
+          ELSE json('false')
+        END
+      ),
+      is_archived = CASE
+        WHEN
+          json_type(payload_json, '$.isArchived') = 'true'
+          OR json_extract(payload_json, '$.status') = 'archived'
+          OR is_archived = 1
+          OR status = 'archived'
+          OR json_type(payload_json, '$.archivedAt') IS NOT NULL
+        THEN 1
+        ELSE 0
       END,
       metadata_version = metadata_version + 1,
       committed_at = MAX(
         committed_at,
-        CAST(strftime('%s', 'now') AS INTEGER) * 1000
+        CAST(unixepoch('now', 'subsec') * 1000 AS INTEGER)
       )
     WHERE
       json_extract(payload_json, '$.status') = 'archived'
-      OR json_type(payload_json, '$.archivedAt') IS NOT NULL;
+      OR status = 'archived'
+      OR json_type(payload_json, '$.archivedAt') IS NOT NULL
+      OR (
+        (
+          json_type(payload_json, '$.isArchived') = 'true'
+          OR is_archived = 1
+        )
+        AND (
+          json_type(payload_json, '$.isArchived') IS NOT 'true'
+          OR is_archived != 1
+        )
+      )
+      OR (
+        json_type(payload_json, '$.isArchived') IS NOT 'true'
+        AND is_archived != 1
+        AND (
+          json_type(payload_json, '$.isArchived') IS NOT 'false'
+          OR is_archived != 0
+        )
+      );
 
+    DROP INDEX session_metadata_by_status;
     ALTER TABLE session_metadata DROP COLUMN status;
     ALTER TABLE session_metadata DROP COLUMN status_updated_at;
   `,

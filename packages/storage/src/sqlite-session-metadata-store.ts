@@ -3347,15 +3347,7 @@ export class SqliteSessionMetadataStore {
     const identities = uniqueVersionedSessionIdentities(sessions);
     return this.transaction(() => {
       const records = identities.map(({ sessionId, expectedVersion }) =>
-        this.updateHeaderSync(
-          sessionId,
-          {},
-          {
-            expectedVersion,
-            skipNoop: true,
-            archiveState: isArchived,
-          },
-        ),
+        this.setArchivedSync(sessionId, expectedVersion, isArchived),
       );
       if (isArchived) this.deleteGoalAuthorities(identities);
       return records;
@@ -3701,7 +3693,6 @@ export class SqliteSessionMetadataStore {
       expectedVersion?: number;
       skipNoop?: boolean;
       catalogPreview?: { readonly kind: 'replace'; readonly value?: string };
-      archiveState?: boolean;
     } = {},
   ): SessionMetadataRecord {
     if (Object.prototype.hasOwnProperty.call(patch, 'isArchived')) {
@@ -3724,10 +3715,39 @@ export class SqliteSessionMetadataStore {
       {
         ...current.header,
         ...patch,
-        ...(options.archiveState === undefined ? {} : { isArchived: options.archiveState }),
       },
       sessionId,
     );
+    return this.persistHeaderSync(sessionId, current, next, options);
+  }
+
+  private setArchivedSync(
+    sessionId: string,
+    expectedVersion: number,
+    isArchived: boolean,
+  ): SessionMetadataRecord {
+    const current = this.readRecordSync(sessionId);
+    if (!current) throw new SessionNotFoundError(sessionId);
+    if (expectedVersion !== current.metadataVersion) {
+      throw new SessionMetadataVersionConflictError(
+        sessionId,
+        expectedVersion,
+        current.metadataVersion,
+      );
+    }
+    const next = normalizeSessionHeader({ ...current.header, isArchived }, sessionId);
+    return this.persistHeaderSync(sessionId, current, next, { skipNoop: true });
+  }
+
+  private persistHeaderSync(
+    sessionId: string,
+    current: SessionMetadataRecord,
+    next: SessionHeader,
+    options: {
+      skipNoop?: boolean;
+      catalogPreview?: { readonly kind: 'replace'; readonly value?: string };
+    } = {},
+  ): SessionMetadataRecord {
     if (next.id !== sessionId) {
       throw new SessionMetadataConflictError('Session metadata identity cannot be changed');
     }
@@ -5216,10 +5236,7 @@ function assertSessionCreateFingerprint(value: string): void {
   }
 }
 
-function assertConversationCopyTransition(
-  current: SessionHeader,
-  patch: Partial<SessionHeader>,
-): void {
+function assertConversationCopyTransition(current: SessionHeader, patch: SessionHeaderPatch): void {
   if (!Object.prototype.hasOwnProperty.call(patch, 'conversationCopy')) return;
   if (!isValidConversationCopyTransition(current, patch.conversationCopy)) {
     throw new SessionMetadataConflictError('Session conversation-copy identity is immutable');

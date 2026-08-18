@@ -148,7 +148,7 @@ import {
 } from './request-projection.js';
 import type { ActiveToolResultPruneDiagnosticPatch } from './active-tool-result-prune.js';
 import { toolResultOutput } from './tool-result-output.js';
-import { buildActiveCompactionHeadAnchor } from './active-full-compact.js';
+import { buildActiveCompactionHeadAnchor } from './active-compaction-kernel.js';
 import { compactionDecisionDiagnosticPatch } from './compaction-boundary.js';
 import type {
   AutomaticMemoryCompactionDecision,
@@ -161,7 +161,6 @@ import {
 } from './context-diagnostics.js';
 import {
   AiSdkCompaction,
-  composeActiveCompactionProjection,
   hasActiveToolResultPruneDiagnosticPatch,
   hasBlockingReplayDiagnostics,
 } from './ai-sdk-compaction.js';
@@ -671,7 +670,6 @@ function joinPromptFragments(fragments: readonly (string | undefined)[]): string
 export type AppendMessageFn = (m: StoredMessage) => Promise<void>;
 export type ToolTelemetryRecorder = (record: ToolInvocationRecord) => void;
 export type {
-  ActiveFullCompactBlockRecorder,
   HistoryCompactCheckpointLoader,
   HistoryCompactCheckpointRecorder,
   HistoryCompactLoader,
@@ -2058,39 +2056,24 @@ export class AiSdkBackend implements AgentBackend {
             },
             priorShapeBaseline,
           ).requestShapeHash;
-        const activeCompactHook = composeActiveCompactionProjection(
-          this.compaction.buildSemanticCompactProjection(
-            turnId,
-            model,
-            input.runtimeContext,
-            activeCompactionHeadAnchor,
-            (messagesForStep, activeToolsForStep) =>
-              stepRequestShapeHash(messagesForStep, activeToolsForStep),
-            (patch) => {
-              activeCompactDiagnosticPatch = mergeContextBudgetDiagnosticPatches(
-                activeCompactDiagnosticPatch,
-                patch,
-              );
-            },
-            scope,
-            turnAbortController.signal,
-          ),
-          this.compaction.buildActiveFullCompactProjection(
-            turnId,
-            input.runtimeContext,
-            activeCompactionHeadAnchor,
-            (messagesForStep, activeToolsForStep) =>
-              stepRequestShapeHash(messagesForStep, activeToolsForStep),
-            (patch) => {
-              activeCompactDiagnosticPatch = mergeContextBudgetDiagnosticPatches(
-                activeCompactDiagnosticPatch,
-                patch,
-              );
-            },
-          ),
+        const activeCompactHook = this.compaction.buildSemanticCompactProjection(
+          turnId,
+          model,
+          input.runtimeContext,
+          activeCompactionHeadAnchor,
+          (messagesForStep, activeToolsForStep) =>
+            stepRequestShapeHash(messagesForStep, activeToolsForStep),
+          (patch) => {
+            activeCompactDiagnosticPatch = mergeContextBudgetDiagnosticPatches(
+              activeCompactDiagnosticPatch,
+              patch,
+            );
+          },
+          scope,
+          turnAbortController.signal,
         );
         // Deterministic priority on a capacity-replaced step: the hard window
-        // invariant owns the projection, so semantic/active-full compaction
+        // invariant owns the projection, so semantic compaction
         // yields for that step (recorded as a decision) instead of running a
         // second summarizer over the same request.
         const activeCompactAfterMidTurn =
@@ -3315,6 +3298,7 @@ export class AiSdkBackend implements AgentBackend {
     turnId: string;
     callKind: ModelCallKind;
     modelId: string;
+    historyCompactRoute?: ModelCallAttempt['historyCompactRoute'];
     /**
      * Stated by every caller, never defaulted: an unattributed provider request
      * is silently dropped by usage accounting, so the compiler has to be the
@@ -3326,6 +3310,7 @@ export class AiSdkBackend implements AgentBackend {
     const accounting = this.modelCallAccounting(input.callKind, {
       modelId: input.modelId,
       ...(input.runId ? { runId: input.runId } : {}),
+      ...(input.historyCompactRoute ? { historyCompactRoute: input.historyCompactRoute } : {}),
     });
     const runId = input.runId;
     const beforeRunProviderDispatch = this.input.beforeRunProviderDispatch;
@@ -3369,6 +3354,7 @@ export class AiSdkBackend implements AgentBackend {
       runId?: string;
       /** The model this call actually runs against; priced as that model. */
       modelId?: string;
+      historyCompactRoute?: ModelCallAttempt['historyCompactRoute'];
     },
   ): ModelCallAccountingInput | undefined {
     const record = this.input.recordModelCallAttempt;
@@ -3380,6 +3366,9 @@ export class AiSdkBackend implements AgentBackend {
       connectionSlug: this.input.connection.slug,
       providerId: this.input.connection.providerType,
       callKind,
+      ...(identity?.historyCompactRoute
+        ? { historyCompactRoute: identity.historyCompactRoute }
+        : {}),
       record,
       resolveCost: (usage: ProviderRequestUsage) => this.resolveModelCallCost(usage, modelId),
       ...(this.input.assertModelCallAccountingReady
@@ -4959,10 +4948,10 @@ function sumOptionalCounts<K extends keyof ActiveToolResultPruneDiagnosticPatch>
 function contextBudgetWithActiveProjectionDiagnostics(
   base: ContextBudgetDiagnostic | undefined,
   patch: ActiveToolResultPruneDiagnosticPatch,
-  activeFullCompactPatch: Partial<ContextBudgetDiagnostic> | undefined,
+  activeCompactionPatch: Partial<ContextBudgetDiagnostic> | undefined,
 ): ContextBudgetDiagnostic | undefined {
   const prunePatch = hasActiveToolResultPruneDiagnosticPatch(patch) ? patch : undefined;
-  const mergedPatch = mergeContextBudgetDiagnosticPatches(prunePatch, activeFullCompactPatch);
+  const mergedPatch = mergeContextBudgetDiagnosticPatches(prunePatch, activeCompactionPatch);
   if (!mergedPatch) return base;
   return mergeContextBudgetDiagnostic(base ?? minimalContextBudgetDiagnostic(), mergedPatch);
 }

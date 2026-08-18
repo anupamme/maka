@@ -1,3 +1,4 @@
+import { RuntimeHostProtocolError } from '../protocol/errors.js';
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_COUNT } from '@maka/core/attachments';
@@ -25,7 +26,6 @@ import {
   TURN_MESSAGE_CONTENT_MAX_BYTES,
   TURN_MESSAGE_TEXT_MAX_BYTES,
   RUNTIME_POLICY_OPERATION_SPECS,
-  RuntimeHostProtocolError,
 } from '../protocol/index.js';
 import { HOST_BOOTSTRAP_OPERATION_SPECS } from '../protocol/host-status.js';
 import { composeOperationSpecMaps } from '../protocol/operation-spec.js';
@@ -40,8 +40,25 @@ import {
 } from '../protocol/turn.js';
 
 describe('Runtime Host bootstrap protocol', () => {
-  test('publishes a new compatibility epoch for the Session archive wire contract', () => {
-    assert.equal(RUNTIME_HOST_COMPATIBILITY_EPOCH, 21);
+  test('publishes a new compatibility epoch for the narrowed connection update result', () => {
+    // The pair, not either number: an epoch-21 Host still answers a connection
+    // update this way when the selection strands its default target, so a wire
+    // set that no longer accepts it has to have left epoch 21 behind. Asserting
+    // `> 21` rather than a literal keeps a later increment from colliding here.
+    assert.ok(RUNTIME_HOST_COMPATIBILITY_EPOCH > 21);
+    assert.throws(
+      () =>
+        decodeHostFrame({
+          requestId: 'connection-update-legacy',
+          operation: 'connection.catalog.update',
+          ok: true,
+          result: {
+            kind: 'invalid_default_target',
+            target: { connectionId: '2a42da77-afac-4fb1-bff1-e7d6e6e55e9f', modelId: 'gpt-5' },
+          },
+        }),
+      isInvalidFrame,
+    );
   });
 
   test('selects the highest mutually supported protocol and rejects a gap', () => {
@@ -105,6 +122,20 @@ describe('Runtime Host bootstrap protocol', () => {
       },
     };
     assert.deepEqual(decodeSessionContinuitySnapshot(waiting), waiting);
+    const retrying = {
+      ...continuitySnapshot('epoch-1'),
+      rootTurn: {
+        ...continuitySnapshot('epoch-1').rootTurn,
+        providerRetry: {
+          phase: 'scheduled' as const,
+          attempt: 8,
+          maxAttempts: 10,
+          delayMs: 40_000,
+          reason: 'rate_limit' as const,
+        },
+      },
+    };
+    assert.deepEqual(decodeSessionContinuitySnapshot(retrying), retrying);
     assert.throws(
       () =>
         decodeSessionContinuitySnapshot({
@@ -129,6 +160,27 @@ describe('Runtime Host bootstrap protocol', () => {
         SUBSCRIPTION_OPEN_RESULT_MAX_BYTES,
     );
     assert.throws(() => decodeHostFrame(oversized), isInvalidFrame);
+  });
+
+  test('normalizes legacy Session statuses in continuity snapshots', () => {
+    for (const status of ['review', 'done']) {
+      const decoded = decodeSessionContinuitySnapshot({
+        ...continuitySnapshot('epoch-1'),
+        session: { ...continuitySnapshot('epoch-1').session, status },
+      });
+      assert.equal(decoded.session.status, 'active');
+    }
+  });
+
+  test('rejects unknown Session statuses in continuity snapshots', () => {
+    assert.throws(
+      () =>
+        decodeSessionContinuitySnapshot({
+          ...continuitySnapshot('epoch-1'),
+          session: { ...continuitySnapshot('epoch-1').session, status: 'unknown' },
+        }),
+      isInvalidSessionStatus,
+    );
   });
 
   test('decodes only privacy-normalized bounded subscription live frames', () => {
@@ -1275,6 +1327,10 @@ describe('Runtime Host bootstrap protocol', () => {
 
 function isInvalidFrame(error: unknown): boolean {
   return error instanceof RuntimeHostProtocolError && error.code === 'invalid_frame';
+}
+
+function isInvalidSessionStatus(error: unknown): boolean {
+  return error instanceof RuntimeHostProtocolError && error.message === 'Invalid Session status';
 }
 
 function queuedMessage(

@@ -1,3 +1,4 @@
+import { RuntimeHostProtocolError } from '../protocol/errors.js';
 import { createHash } from 'node:crypto';
 import { isModelExplicitlyUnsupportedForChat } from '@maka/core/model-catalog';
 import { thinkingVariantsForConnection } from '@maka/core/model-thinking';
@@ -12,7 +13,7 @@ import {
   isSessionStartModeLabel as isExecutionSemanticLabel,
   sessionStartModeSpec,
 } from '@maka/core/explore-agent';
-import type { SessionHeader } from '@maka/core/session';
+import type { SessionHeader, SessionHeaderPatch } from '@maka/core/session';
 import {
   isSessionNotFoundError,
   SessionMetadataConflictError,
@@ -37,7 +38,6 @@ import {
   SESSION_CATALOG_RESULT_MAX_BYTES,
   type OperationError,
   type OperationOutcome,
-  RuntimeHostProtocolError,
   type SessionCatalogFilter,
   type SessionCatalogItem,
   type SessionCatalogProjection,
@@ -398,7 +398,7 @@ export class HostSessionCatalogCoordinator {
                 input.expectedRevision,
                 input.patch.labels,
               );
-        const patch: Partial<SessionHeader> = {
+        const patch: SessionHeaderPatch = {
           ...(input.patch.name === undefined ? {} : normalizeSessionNamePatch(input.patch.name)),
           ...(labels === undefined ? {} : { labels }),
           ...(input.patch.isFlagged === undefined ? {} : { isFlagged: input.patch.isFlagged }),

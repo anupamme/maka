@@ -88,6 +88,39 @@ test('prepares a bound Session without exposing Host configuration revisions to 
   );
 });
 
+test('rejects archived Sessions before and after a permission transition', async () => {
+  const initiallyArchived = createRuntimeHostBotSessionAdapter({
+    client: botClient({
+      getSession: async () =>
+        session('bot-session-1', { isArchived: true, status: 'active' }),
+    }),
+    resolveCreateTarget: hostPathCreateTarget,
+    emitSessionsChanged() {},
+  });
+  await assert.rejects(
+    initiallyArchived.prepareSession('bot-session-1'),
+    BotSessionUnavailableError,
+  );
+
+  const archivedDuringUpdate = createRuntimeHostBotSessionAdapter({
+    client: botClient({
+      getSession: async () => session('bot-session-1', { permissionMode: 'ask' }),
+      updateSessionConfiguration: async (sessionId) =>
+        session(sessionId, {
+          permissionMode: 'explore',
+          isArchived: true,
+          status: 'active',
+        }),
+    }),
+    resolveCreateTarget: hostPathCreateTarget,
+    emitSessionsChanged() {},
+  });
+  await assert.rejects(
+    archivedDuringUpdate.prepareSession('bot-session-1'),
+    BotSessionUnavailableError,
+  );
+});
+
 test('reconciles an uncertain Host Session create with its stable Session identity', async () => {
   const adapter = createRuntimeHostBotSessionAdapter({
     client: botClient({

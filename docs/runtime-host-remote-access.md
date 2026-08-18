@@ -14,6 +14,18 @@ npm --workspace maka-agent exec -- maka runtime-host project add /srv/projects/e
 npm --workspace maka-agent exec -- maka runtime-host project list --root /srv/maka
 ```
 
+The Desktop directory picker publishes the service user's home directory by default. To publish a different allowlist, pass one or more named roots when starting the service:
+
+```sh
+npm --workspace maka-agent exec -- maka runtime-host serve \
+  --root /srv/maka \
+  --project-root projects=/srv/projects \
+  --project-root data=/mnt/data \
+  --websocket-port 7443
+```
+
+When any `--project-root <label>=<absolute-path>` option is present, only those roots are available to remote directory browsing. The option is repeatable up to eight times. Maka resolves every root at startup and keeps browsing and registration contained within the selected root.
+
 Project paths stay on the Host. Issue a credential for each Client:
 
 ```sh
@@ -73,9 +85,9 @@ The Client Profile must separately persist the plaintext acknowledgement. Maka n
 
 ## Connect Desktop
 
-Open `Settings → Workspace → Runtime Host`, choose **Add remote Host**, select the connection method, and enter the method-specific endpoint, the ready event's `rootId`, and the issued credential. Choose **Save and connect**.
+Open `Settings → Workspace → Runtime Host`, choose **Add remote Host**, select the connection method, and enter the method-specific endpoint, the ready event's `rootId`, and the issued credential. Choose **Save and enable**.
 
-The credential is stored separately from the Profile. A failed connection keeps the current Host active and removes the incomplete Profile. After connecting, choose a Project registered on that Host; Client-local directory actions remain unavailable.
+The credential is stored separately from the Profile. Desktop keeps Local and every enabled remote Host connected independently. Choose one as the default for new Sessions; existing Sessions continue to use their owning Host. A failed remote connection remains visible without interrupting the other Hosts. After connecting, choose a Project registered on that Host; Client-local directory actions remain unavailable.
 
 ## Connect TUI or CLI
 
