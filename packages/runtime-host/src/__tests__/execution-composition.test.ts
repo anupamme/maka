@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { parseNoRealConnectionError } from '@maka/core/connection-error-copy';
 import { createRequire } from 'node:module';
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -372,6 +373,45 @@ test('production composition commits automatic titles through Host-owned Session
         const summary = (await manager.listSessions()).find((item) => item.id === session.id);
         return summary?.name === 'Host owns this automatic title';
       });
+    } finally {
+      await composition.close();
+    }
+  });
+});
+
+test('a legacy fake-backend session is refused with the product reason, not a registry error', async () => {
+  await withCompositionRoot(async ({ root, owner }) => {
+    const { composition, manager } = await createCapturedExecutionComposition(owner);
+    try {
+      // Written by an older build: this one never produces `fake`, but the
+      // durable header survives and activation dispatches straight off it.
+      const legacy = await manager.createSession({
+        cwd: root,
+        backend: 'fake',
+        llmConnectionSlug: 'fake',
+        model: 'fake-model',
+        permissionMode: 'ask',
+      });
+      const failure = await composition.handlers['turn.start'](
+        {
+          sessionId: legacy.id,
+          turnId: 'turn-legacy-fake',
+          content: { text: 'resume a retired local simulation' },
+        },
+        {
+          hostEpoch: 'execution-composition-test',
+          connectionId: 'legacy-fake-client',
+          surface: 'tui',
+          principal: 'local_os_user',
+          acquireResidency: () => ({ release() {} }),
+        },
+      ).then(
+        (result) => result,
+        (error: unknown) => error,
+      );
+      const message = failure instanceof Error ? failure.message : JSON.stringify(failure);
+      assert.doesNotMatch(message, /No backend factory registered/);
+      assert.equal(parseNoRealConnectionError(message).reason, 'fake_backend');
     } finally {
       await composition.close();
     }
