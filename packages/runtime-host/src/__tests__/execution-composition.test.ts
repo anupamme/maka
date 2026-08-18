@@ -9,7 +9,7 @@ import type {
   AgentGraphIntentClaimRequest,
 } from '@maka/core/agent-graph-control';
 import type { ShellRunRecord } from '@maka/core/shell-run';
-import { FAKE_ASK_USER_QUESTION_PROMPT, FakeBackend } from '@maka/runtime/fake-backend';
+import { FAKE_ASK_USER_QUESTION_PROMPT, FakeBackend } from '@maka/runtime/test-only/fake-backend';
 import { LOCAL_READ_AGENT_DEFINITION } from '@maka/runtime/agent-catalog';
 import { SessionManager } from '@maka/runtime/session-manager';
 import { fingerprintAgentGraphRunnableIntent } from '@maka/runtime/stream-graph-admission';
@@ -80,7 +80,7 @@ test('production composition closes long-term memory after a later startup failu
     const stores = await openInteractiveExecutionStoresForWrite(owner.lease);
     const session = await stores.sessionStore.create({
       cwd: root,
-      backend: 'fake',
+      backend: 'ai-sdk',
       llmConnectionSlug: 'fake',
       model: 'fake-model',
       permissionMode: 'ask',
@@ -120,14 +120,14 @@ test('production recovery preserves legacy Automation history and closes an orph
     const stores = await openInteractiveExecutionStoresForWrite(owner.lease);
     const historical = await stores.sessionStore.create({
       cwd: root,
-      backend: 'fake',
+      backend: 'ai-sdk',
       llmConnectionSlug: 'fake',
       model: 'fake-model',
       permissionMode: 'ask',
     });
     const pending = await stores.sessionStore.create({
       cwd: root,
-      backend: 'fake',
+      backend: 'ai-sdk',
       llmConnectionSlug: 'fake',
       model: 'fake-model',
       permissionMode: 'ask',
@@ -348,7 +348,7 @@ test('production composition commits automatic titles through Host-owned Session
     try {
       const session = await manager.createSession({
         cwd: root,
-        backend: 'fake',
+        backend: 'ai-sdk',
         llmConnectionSlug: 'fake',
         model: 'fake-model',
         permissionMode: 'ask',
@@ -383,7 +383,7 @@ test('production composition orphans ownerless ShellRuns before serving Resource
     const stores = await openInteractiveExecutionStoresForWrite(owner.lease);
     const session = await stores.sessionStore.create({
       cwd: root,
-      backend: 'fake',
+      backend: 'ai-sdk',
       llmConnectionSlug: 'fake',
       model: 'fake-model',
       permissionMode: 'ask',
@@ -431,7 +431,7 @@ test('production Skill catalog resolves a Graph child durable tool surface', asy
     const stores = await openInteractiveExecutionStoresForWrite(owner.lease);
     const parent = await stores.sessionStore.create({
       cwd: root,
-      backend: 'fake',
+      backend: 'ai-sdk',
       llmConnectionSlug: 'fake',
       model: 'fake-model',
       permissionMode: 'ask',
@@ -599,7 +599,7 @@ test('Skill capability previews omit unavailable Tavily search surfaces', async 
     const stores = await openInteractiveExecutionStoresForWrite(owner.lease);
     const session = await stores.sessionStore.create({
       cwd: root,
-      backend: 'fake',
+      backend: 'ai-sdk',
       llmConnectionSlug: connection.slug,
       model: 'fake-model',
       permissionMode: 'bypass',
@@ -656,7 +656,7 @@ test('production composition validates graph stop before aborting a claimed chil
     const claims = createAgentGraphControlStore(root);
     const parent = await stores.sessionStore.create({
       cwd: root,
-      backend: 'fake',
+      backend: 'ai-sdk',
       llmConnectionSlug: 'fake',
       model: 'fake-model',
       permissionMode: 'ask',
@@ -868,7 +868,14 @@ async function createCapturedExecutionComposition(owner: InteractiveRootOwner): 
     return originalRecover.call(this, stores);
   };
   try {
-    const composition = await createExecutionRuntimeHostComposition(compositionContext(owner));
+    // The production composition no longer registers a test backend of its
+    // own; the deterministic one arrives through the same `primaryBackendFactory`
+    // seam the Desktop E2E run uses.
+    const composition = await createExecutionRuntimeHostComposition(
+      compositionContext(owner),
+      {},
+      { primaryBackendFactory: (backendContext) => new FakeBackend(backendContext) },
+    );
     await composition.recover();
     if (!manager) throw new Error('Production execution composition did not construct Runtime');
     return { composition, manager };
@@ -889,7 +896,7 @@ async function createClaimedGraphChild(input: {
   const child = await input.stores.sessionStore.createSubagent({
     cwd: input.root,
     name: `Graph operator ${input.suffix}`,
-    backend: 'fake',
+    backend: 'ai-sdk',
     llmConnectionSlug: 'fake',
     model: 'fake-model',
     permissionMode: 'explore',

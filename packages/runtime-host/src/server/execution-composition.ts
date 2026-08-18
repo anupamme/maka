@@ -24,7 +24,6 @@ import {
   createFilesystemWorkerLaunchSpecProvider,
   FilesystemWorkerClient,
 } from '@maka/runtime/filesystem-worker';
-import { FakeBackend } from '@maka/runtime/fake-backend';
 import { isOAuthEnrollmentProviderEnabled } from '@maka/runtime/oauth-provider-contracts';
 import {
   loadHistoryCompactCheckpointsFromRunLedger,
@@ -286,7 +285,6 @@ export async function createExecutionRuntimeHostComposition(
     });
     await stores.messageReceiptStore.beginHostEpoch(context.hostEpoch);
     const backends = new BackendRegistry();
-    backends.register('fake', (backendContext) => new FakeBackend(backendContext));
     const runtimePolicyActivation = new RuntimePolicyActivationGate();
     const runtimePolicy = new HostRuntimePolicyCoordinator(
       runtimePolicyStores,
