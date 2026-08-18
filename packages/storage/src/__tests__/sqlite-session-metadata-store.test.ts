@@ -589,9 +589,10 @@ describe('SqliteSessionMetadataStore', () => {
     }
   });
 
-  test('rejects a session metadata schema newer than v26', async () => {
+  test('rejects a session metadata schema newer than the supported version', async () => {
     const root = await mkdtemp(join(tmpdir(), 'maka-session-schema-fence-'));
     const path = join(root, 'state.sqlite');
+    const newerSchemaVersion = SQLITE_SESSION_METADATA_SCHEMA_VERSION + 1;
     try {
       const setup = createSqliteSessionMetadataStore(path);
       setup.close();
@@ -599,15 +600,18 @@ describe('SqliteSessionMetadataStore', () => {
       try {
         newer
           .prepare(
-            `UPDATE session_metadata_schema SET version = 27 WHERE scope = 'session_metadata'`,
+            `UPDATE session_metadata_schema SET version = ? WHERE scope = 'session_metadata'`,
           )
-          .run();
+          .run(newerSchemaVersion);
       } finally {
         newer.close();
       }
       assert.throws(
         () => createSqliteSessionMetadataStore(path),
-        /schema 27 is newer than supported version 26/u,
+        new RegExp(
+          `schema ${newerSchemaVersion} is newer than supported version ${SQLITE_SESSION_METADATA_SCHEMA_VERSION}`,
+          'u',
+        ),
       );
     } finally {
       await rm(root, { recursive: true, force: true });
