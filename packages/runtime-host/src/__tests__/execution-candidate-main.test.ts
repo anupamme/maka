@@ -136,5 +136,11 @@ function staticImportSpecifiers(source: string): string[] {
   for (const match of source.matchAll(/(?:^|[\s;}])import\s*['"]([^'"]+)['"]/g)) {
     if (match[1] !== undefined) specifiers.push(match[1]);
   }
+  // Literal dynamic imports are real edges in the shipped graph — the built
+  // `dist` already contains several — so a walk that ignored them could pass
+  // while a production module reached test-only material through `import(…)`.
+  for (const match of source.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]/g)) {
+    if (match[1] !== undefined) specifiers.push(match[1]);
+  }
   return specifiers;
 }
