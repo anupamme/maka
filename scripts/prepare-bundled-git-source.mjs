@@ -3,9 +3,9 @@ import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const DUGITE_VERSION = '3.2.2';
-const DUGITE_NATIVE_RELEASE = 'v2.53.0-3';
-const DUGITE_NATIVE_COMMIT = 'f49d0098409aa243de8b9162127025ab0bb07a88';
+const DUGITE_VERSION = '3.2.3';
+const DUGITE_NATIVE_RELEASE = 'v2.53.0-4';
+const DUGITE_NATIVE_COMMIT = '4098283a7ecb8a227b9d43580336c78a06f90e5d';
 const DUGITE_NATIVE_BUILD = DUGITE_NATIVE_COMMIT.slice(0, 7);
 
 export const BUNDLED_GIT_SOURCE_COMPONENTS = Object.freeze([

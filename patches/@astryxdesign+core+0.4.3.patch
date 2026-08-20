@@ -283,10 +283,10 @@ index 867ed5a..4b8f835 100644
  Markdown.displayName = 'Markdown';
 \ No newline at end of file
 diff --git a/node_modules/@astryxdesign/core/dist/SideNav/SideNavItem.d.ts b/node_modules/@astryxdesign/core/dist/SideNav/SideNavItem.d.ts
-index 16107cf..57aeb6c 100644
+index e7b8e00..fad2e72 100644
 --- a/node_modules/@astryxdesign/core/dist/SideNav/SideNavItem.d.ts
 +++ b/node_modules/@astryxdesign/core/dist/SideNav/SideNavItem.d.ts
-@@ -61,6 +61,12 @@ export interface SideNavItemProps extends BaseProps<HTMLElement> {
+@@ -66,6 +66,12 @@ export interface SideNavItemProps extends BaseProps<HTMLElement> {
       * Right-side content (badges, counts).
       */
      endContent?: ReactNode;
@@ -299,20 +299,20 @@ index 16107cf..57aeb6c 100644
      /**
       * Sub-items for nesting.
       */
-@@ -107,7 +113,7 @@ export interface SideNavItemProps extends BaseProps<HTMLElement> {
+@@ -112,7 +118,7 @@ export interface SideNavItemProps extends BaseProps<HTMLElement> {
   * </SideNavItem>
   * ```
   */
--export declare function SideNavItem({ as, label, icon, selectedIcon, isSelected, isDisabled, href, onClick, endContent, children, collapsible: itemCollapsible, size, 'data-testid': testId, ref, xstyle, }: SideNavItemProps): import("react").JSX.Element | null;
-+export declare function SideNavItem({ as, label, icon, selectedIcon, isSelected, isDisabled, href, onClick, endContent, trailingAction, children, collapsible: itemCollapsible, size, 'data-testid': testId, ref, xstyle, }: SideNavItemProps): import("react").JSX.Element | null;
+-export declare function SideNavItem({ as, label, icon, selectedIcon, isSelected, isDisabled, href, onClick, endContent, children, collapsible: itemCollapsible, size, 'data-testid': testId, ref, xstyle, ...rest }: SideNavItemProps): import("react").JSX.Element | null;
++export declare function SideNavItem({ as, label, icon, selectedIcon, isSelected, isDisabled, href, onClick, endContent, trailingAction, children, collapsible: itemCollapsible, size, 'data-testid': testId, ref, xstyle, ...rest }: SideNavItemProps): import("react").JSX.Element | null;
  export declare namespace SideNavItem {
      var displayName: string;
  }
 diff --git a/node_modules/@astryxdesign/core/dist/SideNav/SideNavItem.js b/node_modules/@astryxdesign/core/dist/SideNav/SideNavItem.js
-index a72d264..c65bd32 100644
+index 9853461..590561b 100644
 --- a/node_modules/@astryxdesign/core/dist/SideNav/SideNavItem.js
 +++ b/node_modules/@astryxdesign/core/dist/SideNav/SideNavItem.js
-@@ -159,6 +159,7 @@ export function SideNavItem({
+@@ -210,6 +210,7 @@ export function SideNavItem({
    href,
    onClick,
    endContent,
@@ -320,7 +320,7 @@ index a72d264..c65bd32 100644
    children,
    collapsible: itemCollapsible,
    size = 'md',
-@@ -447,7 +448,7 @@ export function SideNavItem({
+@@ -491,7 +492,7 @@ export function SideNavItem({
    const item = /*#__PURE__*/_jsxs("div", {
      ref: itemRef,
      ...stylex.props(styles.root, xstyle),
@@ -650,10 +650,10 @@ index a6f850b..b6e0f2a 100644
  }
  
 diff --git a/node_modules/@astryxdesign/core/src/SideNav/SideNavItem.tsx b/node_modules/@astryxdesign/core/src/SideNav/SideNavItem.tsx
-index 41ccdb5..90b2406 100644
+index 1c16116..0ca4ad0 100644
 --- a/node_modules/@astryxdesign/core/src/SideNav/SideNavItem.tsx
 +++ b/node_modules/@astryxdesign/core/src/SideNav/SideNavItem.tsx
-@@ -292,6 +292,12 @@ export interface SideNavItemProps extends BaseProps<HTMLElement> {
+@@ -315,6 +315,12 @@ export interface SideNavItemProps extends BaseProps<HTMLElement> {
     * Right-side content (badges, counts).
     */
    endContent?: ReactNode;
@@ -666,7 +666,7 @@ index 41ccdb5..90b2406 100644
    /**
     * Sub-items for nesting.
     */
-@@ -355,6 +361,7 @@ export function SideNavItem({
+@@ -378,6 +384,7 @@ export function SideNavItem({
    href,
    onClick,
    endContent,
@@ -674,7 +674,7 @@ index 41ccdb5..90b2406 100644
    children,
    collapsible: itemCollapsible,
    size = 'md',
-@@ -681,6 +688,7 @@ export function SideNavItem({
+@@ -694,6 +701,7 @@ export function SideNavItem({
    const item = (
      <div ref={itemRef} {...stylex.props(styles.root, xstyle)}>
        {itemElement}

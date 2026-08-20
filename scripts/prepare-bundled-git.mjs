@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const expectedDugiteVersion = '3.2.2';
+const expectedDugiteVersion = '3.2.3';
 const sha256Pattern = /^[a-f0-9]{64}$/u;
 
 export async function prepareBundledGit({

@@ -4,7 +4,7 @@ import {
   Key,
   ProcessTerminal,
   SelectList,
-  TUI,
+  TuiMainScreen,
   isKeyRelease,
   isKeyRepeat,
   matchesKey,
@@ -12,6 +12,7 @@ import {
   type OverlayHandle,
   type SelectItem,
   type Terminal,
+  type TUI,
 } from '@earendil-works/pi-tui';
 import type { PermissionMode } from '@maka/core/permission';
 import {
@@ -257,7 +258,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
   const setTaskbarProgress = (active: boolean): void => {
     if (taskbarProgress) terminal.setProgress(active);
   };
-  const tui = new TUI(terminal);
+  const tui: TUI = new TuiMainScreen(terminal);
   const state = createMakaPiTranscriptState();
   let transcriptMessages: readonly StoredMessage[] = [];
   const replaceTranscript = (messages: readonly StoredMessage[]): void => {

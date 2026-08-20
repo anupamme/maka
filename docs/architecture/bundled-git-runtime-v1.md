@@ -12,7 +12,7 @@ the current platform and architecture. It must never discover or fall back to a 
 
 Ownership is split deliberately:
 
-- `dugite@3.2.2` owns the upstream `dugite-native` release URL and archive SHA-256;
+- `dugite@3.2.3` owns the upstream `dugite-native` release URL and archive SHA-256;
 - `scripts/prepare-bundled-git.mjs` owns build-time version, executable, license, and digest validation;
 - `bundled-git.json` binds one packaged artifact to platform, architecture, Git version, archive digest,
   executable path, and executable digest;
@@ -36,8 +36,8 @@ probe result.
 
 ## 2. Supply chain
 
-The dependency is exact-pinned as `dugite@3.2.2`. Its `embedded-git.json` pins
-`desktop/dugite-native@v2.53.0-3` and provides a SHA-256 for every supported archive. Dugite verifies that
+The dependency is exact-pinned as `dugite@3.2.3`. Its `embedded-git.json` pins
+`desktop/dugite-native@v2.53.0-4` and provides a SHA-256 for every supported archive. Dugite verifies that
 archive before extraction. Maka then executes the extracted binary with `--version`, hashes that exact
 binary, and emits the platform manifest used by packaging and runtime admission.
 
