@@ -4,11 +4,11 @@ import { cn } from './utils.js';
 
 /**
  * Stock ChatLayoutProps plus the patch-package conversationKey seam
- * (`patches/@astryxdesign+core+0.3.0.patch`): resets scroll / unread state when
+ * (`patches/@astryxdesign+core+0.4.3.patch`): resets scroll / unread state when
  * the host switches conversations in place without remounting the composer.
  *
  * Intersection is explicit because some TS resolutions only see the published
- * Astryx destructure list (which omits conversationKey) via ComponentProps.
+ * Astryx destructure list via ComponentProps.
  */
 export type ChatSurfaceLayoutProps = ComponentProps<typeof ChatLayout> & {
   conversationKey?: string | number;

@@ -14,14 +14,14 @@ export const BUNDLED_GIT_SOURCE_COMPONENTS = Object.freeze([
   component(
     'git-for-windows',
     'git-for-windows/git',
-    'f8165afd89b0c190677a093f20894f5fce12f97a',
+    '3a9e66c3d66bb6509be99fe21c3205f024c04568',
     'GPL-2.0-only',
   ),
   component('git-lfs', 'git-lfs/git-lfs', 'b84b33847fe6458f36ef521534dc0eac953cb379', 'MIT'),
   component(
     'git-credential-manager',
     'git-ecosystem/git-credential-manager',
-    '5fa7116896c82164996a609accd1c5ad90fe730a',
+    '194ba290ce533465310d50f811684ab180536ae7',
     'MIT',
   ),
   component(
