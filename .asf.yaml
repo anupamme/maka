@@ -79,7 +79,6 @@ github:
             type: branch
 
 notifications:
-  commits:      commits@maka.apache.org
   discussions:  dev@maka.apache.org 
   issues:       commits@maka.apache.org
   pullrequests: commits@maka.apache.org
