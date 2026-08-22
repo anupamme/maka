@@ -2876,6 +2876,10 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     },
     transcript: {
       description: primaryGuidance.commands.transcript,
+      // Read-only overlay over the in-memory transcript: showTranscriptViewer
+      // only calls tui.showOverlay and never enters runControl, so it stays
+      // usable mid-turn — which is exactly when looking back is most useful.
+      midTurn: 'local',
       run: (parts: string[]) => {
         if (parts.length !== 1) {
           state.entries.push({
