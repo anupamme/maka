@@ -457,20 +457,8 @@ export async function createExecutionRuntimeHostComposition(
       startRecoveredMessages: (input, admission) =>
         requireRootCoordinator(rootCoordinator).startRecoveredMessages(input, admission),
       prepareMessage: (input) => requireRootCoordinator(rootCoordinator).prepareMessage(input),
-      commitMessageAdmission: (admission, materializeTranscript) =>
-        stores.sessionStore.commitMessageAdmission(
-          admission,
-          materializeTranscript
-            ? {
-                type: 'user',
-                id: admission.messageId,
-                turnId: admission.turnId,
-                ts: admission.admittedAt,
-                ...admission.content,
-                steeringEventId: admission.messageId,
-              }
-            : undefined,
-        ),
+      commitMessageAdmission: (admission) => stores.sessionStore.commitMessageAdmission(admission),
+      updateMessageAdmission: (admission) => stores.sessionStore.updateMessageAdmission(admission),
       claimStop: (input, commitQueueFence, admission) =>
         requireRootCoordinator(rootCoordinator).claimStop(input, commitQueueFence, admission),
     };

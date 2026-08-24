@@ -565,30 +565,28 @@ describe('SQLite core execution stores', () => {
         steeringEventId: admission.messageId,
       } as const;
 
-      await sessions.commitMessageAdmission(admission, transcriptMessage);
+      await sessions.commitMessageAdmission(admission);
       assert.deepEqual(await sessions.readMessages(session.id), [transcriptMessage]);
       assert.deepEqual(
         await sessions.commitMessageAdmission({ ...admission, admittedAt: 999 }),
         admission,
       );
-      await assert.rejects(
-        sessions.commitMessageAdmission(admission, {
-          ...transcriptMessage,
-          text: 'different transcript',
-        }),
-        /transcript identity conflict/,
-      );
-
       await sessions.commitMessageAdmission({
         ...admission,
         messageId: 'message-2',
         runId: 'different-run',
+        submittedPlacement: 'next_turn',
+        placement: 'next_turn',
+        disposition: 'followup',
       });
       await assert.rejects(
-        sessions.commitMessageAdmission(
-          { ...admission, messageId: 'message-2' },
-          { ...transcriptMessage, id: 'message-2' },
-        ),
+        sessions.commitMessageAdmission({
+          ...admission,
+          messageId: 'message-2',
+          submittedPlacement: 'next_turn',
+          placement: 'next_turn',
+          disposition: 'followup',
+        }),
         /identity conflict/,
       );
       assert.deepEqual(
@@ -599,7 +597,7 @@ describe('SQLite core execution stores', () => {
     });
   });
 
-  test('updates pending Message content only for the exact unsettled admission', async () => {
+  test('atomically updates an exact unsettled Message admission and its existing transcript', async () => {
     await withRoot(async (root) => {
       const sessions = createSessionStore(root);
       const session = await sessions.create({
@@ -615,10 +613,18 @@ describe('SQLite core execution stores', () => {
         messageId: 'message-1',
         content: { text: 'original' },
         modelContent: { text: 'prepared original' },
-        submittedPlacement: 'next_turn',
-        placement: 'next_turn',
-        disposition: 'followup',
+        submittedPlacement: 'current_turn',
+        placement: 'current_turn',
+        disposition: 'steering',
         admittedAt: 123,
+      } as const;
+      const transcriptMessage = {
+        type: 'user',
+        id: admission.messageId,
+        turnId: admission.turnId,
+        ts: admission.admittedAt,
+        text: admission.content.text,
+        steeringEventId: admission.messageId,
       } as const;
       await sessions.commitMessageAdmission(admission);
       const receipts = createSqliteMessageReceiptStore(root);
@@ -627,15 +633,51 @@ describe('SQLite core execution stores', () => {
         content: { text: 'corrected' },
         modelContent: { text: 'prepared corrected' },
       } as const;
+      const updatedTranscriptMessage = {
+        ...transcriptMessage,
+        text: updated.content.text,
+      } as const;
 
-      await receipts.updatePendingMessage(updated);
+      await sessions.updateMessageAdmission(updated);
       assert.deepEqual(await receipts.listPendingMessages(), [updated]);
+      assert.deepEqual(await sessions.readMessages(session.id), [updatedTranscriptMessage]);
       await assert.rejects(
-        receipts.updatePendingMessage({ ...updated, runId: 'wrong-run' }),
+        sessions.updateMessageAdmission({ ...updated, runId: 'wrong-run' }),
+        /identity conflict/,
+      );
+      await assert.rejects(
+        sessions.updateMessageAdmission({ ...updated, admittedAt: updated.admittedAt + 1 }),
+        /identity conflict/,
+      );
+      await assert.rejects(
+        sessions.updateMessageAdmission({
+          ...updated,
+          placement: 'next_turn',
+          disposition: 'followup',
+        }),
         /identity conflict/,
       );
       await receipts.commitMessageRetractions(session.id, [admission.messageId]);
-      await assert.rejects(receipts.updatePendingMessage(updated), /identity conflict/);
+      await assert.rejects(sessions.updateMessageAdmission(updated), /identity conflict/);
+
+      const followup = {
+        ...admission,
+        messageId: 'message-2',
+        content: { text: 'queued original' },
+        modelContent: { text: 'prepared queued original' },
+        submittedPlacement: 'next_turn',
+        placement: 'next_turn',
+        disposition: 'followup',
+      } as const;
+      await sessions.commitMessageAdmission(followup);
+      const updatedFollowup = {
+        ...followup,
+        content: { text: 'queued corrected' },
+        modelContent: { text: 'prepared queued corrected' },
+      } as const;
+      await sessions.updateMessageAdmission(updatedFollowup);
+      assert.deepEqual(await receipts.listPendingMessages(), [updatedFollowup]);
+      assert.deepEqual(await sessions.readMessages(session.id), [updatedTranscriptMessage]);
 
       receipts.close();
       await sessions.close?.();
@@ -685,17 +727,11 @@ describe('SQLite core execution stores', () => {
       for (const messageId of ['followup-b', 'followup-a']) {
         const pending = admissions.find((candidate) => candidate.messageId === messageId);
         assert.ok(pending);
-        await sessions.commitMessageAdmission(
-          { ...pending, placement: 'current_turn', disposition: 'steering' },
-          {
-            type: 'user',
-            id: messageId,
-            turnId: pending.turnId,
-            ts: pending.admittedAt,
-            text: messageId,
-            steeringEventId: messageId,
-          },
-        );
+        await sessions.commitMessageAdmission({
+          ...pending,
+          placement: 'current_turn',
+          disposition: 'steering',
+        });
       }
       assert.deepEqual(
         (await receipts.listPendingMessages()).map((pending) => pending.messageId),

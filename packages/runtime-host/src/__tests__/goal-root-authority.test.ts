@@ -562,20 +562,8 @@ async function createFixture(options: { recoverAdmissions?: boolean } = {}): Pro
     startFromMessage: (input, lease) =>
       requireCoordinator(coordinator).startFromMessage(input, lease),
     prepareMessage: (input) => requireCoordinator(coordinator).prepareMessage(input),
-    commitMessageAdmission: (admission, materializeTranscript) =>
-      stores.sessionStore.commitMessageAdmission(
-        admission,
-        materializeTranscript
-          ? {
-              type: 'user',
-              id: admission.messageId,
-              turnId: admission.turnId,
-              ts: admission.admittedAt,
-              ...admission.content,
-              steeringEventId: admission.messageId,
-            }
-          : undefined,
-      ),
+    commitMessageAdmission: (admission) => stores.sessionStore.commitMessageAdmission(admission),
+    updateMessageAdmission: (admission) => stores.sessionStore.updateMessageAdmission(admission),
     claimStop: (input, commitQueueFence, lease) =>
       requireCoordinator(coordinator).claimStop(input, commitQueueFence, lease),
   };

@@ -217,7 +217,7 @@ test('startup recovery replays an admitted regenerate with its source lineage', 
   });
 });
 
-test('startup accepts successor steering materialized under its predecessor', async () => {
+test('startup accepts edited steering folded into a successor while preserving predecessor provenance', async () => {
   await withExecutionRoot(async (fixture) => {
     const predecessorTurnId = randomUUID();
     const predecessorHost = await fixture.startHost();
@@ -245,6 +245,11 @@ test('startup accepts successor steering materialized under its predecessor', as
     const ledger = await fixture.readTurn(turnId);
     assert.equal(ledger.runs.length, 1);
     assert.equal(ledger.userMessages.length, 0);
+    const predecessorLedger = await fixture.readTurn(predecessorTurnId);
+    assert.equal(
+      predecessorLedger.userMessages.find((message) => message.id === seeded.sourceMessageId)?.text,
+      'steering folded from predecessor',
+    );
   });
 });
 

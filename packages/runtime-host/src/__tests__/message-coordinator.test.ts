@@ -2713,6 +2713,7 @@ function createFixture(
   let coordinator: HostMessageCoordinator;
   let receiptStore!: MessageReceiptStore & {
     commitAdmission(admission: PendingMessageAdmission): Promise<PendingMessageAdmission>;
+    updateAdmission(admission: PendingMessageAdmission): Promise<void>;
     failNextRetraction(error: Error): void;
     pendingAdmissionCount(): number;
   };
@@ -2759,7 +2760,8 @@ function createFixture(
       return { turnId };
     },
     prepareMessage: (input) => prepareMessage(input),
-    commitMessageAdmission: async (input, materializeTranscript) => {
+    commitMessageAdmission: async (input) => {
+      const materializeTranscript = input.disposition === 'steering';
       const delay = steeringAdmissionDelay;
       if (materializeTranscript && delay) {
         steeringAdmissionDelay = undefined;
@@ -2772,6 +2774,16 @@ function createFixture(
         steeringAdmissions.push(structuredClone(input));
       }
       return committed;
+    },
+    updateMessageAdmission: async (admission) => {
+      await receiptStore.updateAdmission(admission);
+      if (admission.disposition === 'steering') {
+        const index = steeringAdmissions.findIndex(
+          (candidate) => candidate.messageId === admission.messageId,
+        );
+        if (index < 0) throw new Error('Message update transcript identity conflict');
+        steeringAdmissions[index] = structuredClone(admission);
+      }
     },
     claimStop: async (_input, commitQueueFence) => {
       commitQueueFence();
@@ -2904,6 +2916,7 @@ function memoryReceiptStore(
   onRead?: () => void,
 ): MessageReceiptStore & {
   commitAdmission(admission: PendingMessageAdmission): Promise<PendingMessageAdmission>;
+  updateAdmission(admission: PendingMessageAdmission): Promise<void>;
   failNextRetraction(error: Error): void;
   pendingAdmissionCount(): number;
 } {
@@ -2985,7 +2998,7 @@ function memoryReceiptStore(
         .sort((left, right) =>
           left.disposition === right.disposition ? 0 : left.disposition === 'steering' ? -1 : 1,
         ),
-    updatePendingMessage: async (admission) => {
+    updateAdmission: async (admission) => {
       const admissionKey = `${admission.sessionId}:${admission.messageId}`;
       const existing = pending.get(admissionKey);
       if (

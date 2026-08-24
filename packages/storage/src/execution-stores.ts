@@ -422,8 +422,10 @@ async function createExecutionStoresForWrite<K extends StorageRootKind, E extend
         run(() => sessionStore.appendMessage(sessionId, message)),
       appendMessages: (sessionId, messages) =>
         run(() => sessionStore.appendMessages(sessionId, messages)),
-      commitMessageAdmission: (admission, transcriptMessage) =>
-        run(() => sessionStore.commitMessageAdmission(admission, transcriptMessage)),
+      commitMessageAdmission: (admission) =>
+        run(() => sessionStore.commitMessageAdmission(admission)),
+      updateMessageAdmission: (admission) =>
+        run(() => sessionStore.updateMessageAdmission(admission)),
       subscribeTranscriptChanges: (listener) => sessionStore.subscribeTranscriptChanges(listener),
       updateHeader: (sessionId, patch) => run(() => sessionStore.updateHeader(sessionId, patch)),
       updateHeaderVersioned: (sessionId, patch, expectedRevision) =>
@@ -563,8 +565,6 @@ async function createExecutionStoresForWrite<K extends StorageRootKind, E extend
       readMessageSettlement: (sessionId, messageId) =>
         run(() => messageReceiptStore.readMessageSettlement(sessionId, messageId)),
       listPendingMessages: () => run(() => messageReceiptStore.listPendingMessages()),
-      updatePendingMessage: (admission) =>
-        run(() => messageReceiptStore.updatePendingMessage(admission)),
       commitMessageOrder: (sessionId, messageIds) =>
         run(() => messageReceiptStore.commitMessageOrder(sessionId, messageIds)),
       commitMessageRetractions: (sessionId, messageIds) =>

@@ -2162,20 +2162,8 @@ test('hosted linked child roots share admission, message, terminal, and stop aut
       startFromMessage: (input, admission) =>
         requireCoordinator(coordinator).startFromMessage(input, admission),
       prepareMessage: (input) => requireCoordinator(coordinator).prepareMessage(input),
-      commitMessageAdmission: (admission, materializeTranscript) =>
-        stores.sessionStore.commitMessageAdmission(
-          admission,
-          materializeTranscript
-            ? {
-                type: 'user',
-                id: admission.messageId,
-                turnId: admission.turnId,
-                ts: admission.admittedAt,
-                ...admission.content,
-                steeringEventId: admission.messageId,
-              }
-            : undefined,
-        ),
+      commitMessageAdmission: (admission) => stores.sessionStore.commitMessageAdmission(admission),
+      updateMessageAdmission: (admission) => stores.sessionStore.updateMessageAdmission(admission),
       claimStop: (input, commitQueueFence, admission) =>
         requireCoordinator(coordinator).claimStop(input, commitQueueFence, admission),
     };
@@ -4587,20 +4575,8 @@ async function createFailureFixture(options: {
     startFromMessage: (input, admission) =>
       requireCoordinator(coordinator).startFromMessage(input, admission),
     prepareMessage: (input) => requireCoordinator(coordinator).prepareMessage(input),
-    commitMessageAdmission: (admission, materializeTranscript) =>
-      stores.sessionStore.commitMessageAdmission(
-        admission,
-        materializeTranscript
-          ? {
-              type: 'user',
-              id: admission.messageId,
-              turnId: admission.turnId,
-              ts: admission.admittedAt,
-              ...admission.content,
-              steeringEventId: admission.messageId,
-            }
-          : undefined,
-      ),
+    commitMessageAdmission: (admission) => stores.sessionStore.commitMessageAdmission(admission),
+    updateMessageAdmission: (admission) => stores.sessionStore.updateMessageAdmission(admission),
     claimStop: (input, commitQueueFence, admission) =>
       requireCoordinator(coordinator).claimStop(input, commitQueueFence, admission),
   };

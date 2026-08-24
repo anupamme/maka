@@ -745,19 +745,35 @@ export class ExecutionFixture {
     try {
       stores = await openInteractiveExecutionStoresForWrite(owner.lease);
       const admittedAt = Date.now();
+      const predecessor = (
+        await stores.agentRunStore.listRootTurnAdmissionsForRecovery(this.sessionId)
+      ).find((admission) => admission.turnId === predecessorTurnId);
+      assert.ok(predecessor);
+      if (!predecessor) throw new Error('Predecessor root admission is unavailable');
+      const originalContent = { text: 'steering before queued edit' };
       const source = {
         messageId: randomUUID(),
         content: { text: 'steering folded from predecessor' },
         placement: 'current_turn' as const,
         disposition: 'steering' as const,
       };
-      await stores.sessionStore.appendMessage(this.sessionId, {
-        type: 'user',
-        id: source.messageId,
+      const pending = {
+        sessionId: this.sessionId,
         turnId: predecessorTurnId,
-        ts: admittedAt,
-        steeringEventId: source.messageId,
-        ...source.content,
+        runId: predecessor.runId,
+        messageId: source.messageId,
+        content: originalContent,
+        modelContent: originalContent,
+        submittedPlacement: 'current_turn' as const,
+        placement: 'current_turn' as const,
+        disposition: 'steering' as const,
+        admittedAt,
+      };
+      await stores.sessionStore.commitMessageAdmission(pending);
+      await stores.sessionStore.updateMessageAdmission({
+        ...pending,
+        content: source.content,
+        modelContent: source.content,
       });
       const result = await stores.agentRunStore.admitRootTurn({
         sessionId: this.sessionId,
@@ -771,6 +787,9 @@ export class ExecutionFixture {
         admittedAt,
       });
       assert.equal(result.kind, 'admitted');
+      await stores.messageReceiptStore.garbageCollectMessageAdmissions(this.sessionId, [
+        source.messageId,
+      ]);
       await stores.agentRunStore.createRun({
         runId: result.admission.runId,
         invocationId: result.admission.runId,

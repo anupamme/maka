@@ -129,6 +129,7 @@ import {
   type SessionTurnContributionPage,
   type SessionTurnLandmarkSnapshot,
 } from './session-store.js';
+import { projectSessionCatalogMessages } from './session-catalog-message-projection.js';
 import {
   isDiscardableConversationCopy,
   isValidConversationCopyTransition,
@@ -156,6 +157,21 @@ const SQLITE_TURN_LANDMARK_LEGACY_NEIGHBOR_MESSAGES = 32;
 
 function decodeStoredMessage(value: unknown): StoredMessage {
   return decodePersistedStoredMessage(markPersisted<StoredMessage>(value));
+}
+
+function encodePendingAdmissionTranscript(
+  admission: PendingMessageAdmission,
+): { readonly message: StoredMessage; readonly json: string } | undefined {
+  if (admission.disposition !== 'steering') return undefined;
+  const message = decodeCanonicalMessage({
+    type: 'user',
+    id: admission.messageId,
+    turnId: admission.turnId,
+    ts: admission.admittedAt,
+    ...admission.content,
+    steeringEventId: admission.messageId,
+  });
+  return { message, json: JSON.stringify(message) };
 }
 
 const require = createRequire(import.meta.url);
@@ -1486,24 +1502,9 @@ export class SqliteSessionMetadataStore {
 
   async commitMessageAdmission(
     admission: PendingMessageAdmission,
-    transcriptMessage?: StoredMessage,
-    projection?: SessionCatalogMessageProjection,
   ): Promise<PendingMessageAdmission> {
     this.assertOpen();
     const stored = normalizePendingMessageAdmission(admission);
-    const encodedMessage = transcriptMessage
-      ? (() => {
-          const json = JSON.stringify(transcriptMessage);
-          const message = decodeCanonicalMessage(JSON.parse(json) as unknown);
-          if (message.id !== stored.messageId) {
-            throw new Error('Message admission transcript identity mismatch');
-          }
-          return { message, json };
-        })()
-      : undefined;
-    if (encodedMessage && !projection) {
-      throw new Error('Message admission transcript projection is missing');
-    }
     return this.transaction(() => {
       const record = this.readRecordSync(stored.sessionId);
       if (!record) throw new SessionNotFoundError(stored.sessionId);
@@ -1551,7 +1552,6 @@ export class SqliteSessionMetadataStore {
         }
         canonical = existing;
         if (
-          encodedMessage &&
           stored.placement === 'current_turn' &&
           stored.disposition === 'steering' &&
           existing.placement === 'next_turn' &&
@@ -1572,6 +1572,7 @@ export class SqliteSessionMetadataStore {
           throw new Error('Message admission queue disposition conflict');
         }
       }
+      const encodedMessage = encodePendingAdmissionTranscript(canonical);
       if (encodedMessage) {
         const existingMessages = this.readMessagesWith(
           stored.sessionId,
@@ -1596,13 +1597,140 @@ export class SqliteSessionMetadataStore {
           this.insertSessionMessagesSync(stored.sessionId, row.last_sequence + 1, [encodedMessage]);
           this.updateCatalogProjectionSync(
             stored.sessionId,
-            projection!,
+            projectSessionCatalogMessages([encodedMessage.message]),
             false,
             !record.header.connectionLocked && encodedMessage.message.type === 'user',
           );
         }
       }
       return canonical;
+    });
+  }
+
+  async updateMessageAdmission(admission: PendingMessageAdmission): Promise<void> {
+    this.assertOpen();
+    const stored = normalizePendingMessageAdmission(admission);
+    const encodedMessage = encodePendingAdmissionTranscript(stored);
+    this.transaction(() => {
+      if (!this.readRecordSync(stored.sessionId)) {
+        throw new SessionNotFoundError(stored.sessionId);
+      }
+      const settlement = this.db
+        .prepare(`
+          SELECT 1
+          FROM core_message_admission_settlements
+          WHERE session_id = ? AND message_id = ?
+        `)
+        .get(stored.sessionId, stored.messageId);
+      const existingAdmission = readPendingMessageAdmission(
+        this.db,
+        stored.sessionId,
+        stored.messageId,
+      );
+      if (
+        settlement ||
+        !existingAdmission ||
+        existingAdmission.placement !== stored.placement ||
+        existingAdmission.disposition !== stored.disposition ||
+        existingAdmission.admittedAt !== stored.admittedAt ||
+        !samePendingMessageAdmission(
+          {
+            ...existingAdmission,
+            content: stored.content,
+            modelContent: stored.modelContent,
+          },
+          stored,
+        )
+      ) {
+        throw new Error('Message update identity conflict');
+      }
+      const transcriptRows = this.db
+        .prepare(`
+          SELECT message.sequence, message.record_json, payload.record_bytes, payload.sha256
+          FROM session_messages AS message
+          LEFT JOIN session_message_payloads AS payload
+            ON payload.session_id = message.session_id AND payload.sequence = message.sequence
+          WHERE message.session_id = ? AND message.message_id = ?
+        `)
+        .all(stored.sessionId, stored.messageId) as StoredSessionMessagePayloadRow[];
+      if (transcriptRows.length > 1) {
+        throw new Error('Message update transcript identity is ambiguous');
+      }
+      if (encodedMessage ? transcriptRows.length !== 1 : transcriptRows.length !== 0) {
+        throw new Error('Message update transcript identity conflict');
+      }
+      const transcriptRow = transcriptRows[0];
+      if (transcriptRow && encodedMessage) {
+        const existingMessage = decodeStoredMessageRecordRow(
+          this.db,
+          stored.sessionId,
+          transcriptRow,
+        );
+        if (
+          existingMessage.type !== 'user' ||
+          existingMessage.id !== stored.messageId ||
+          existingMessage.turnId !== stored.turnId ||
+          existingMessage.ts !== stored.admittedAt ||
+          existingMessage.steeringEventId !== stored.messageId
+        ) {
+          throw new Error('Message update transcript identity conflict');
+        }
+      }
+      this.db
+        .prepare(`
+          UPDATE core_message_admissions
+          SET content_json = ?, model_content_json = ?
+          WHERE session_id = ? AND message_id = ?
+        `)
+        .run(
+          JSON.stringify(stored.content),
+          JSON.stringify(stored.modelContent),
+          stored.sessionId,
+          stored.messageId,
+        );
+      if (transcriptRow && encodedMessage) {
+        const sequence = requireStoredMessageSequence(transcriptRow.sequence, stored.sessionId);
+        if (transcriptRow.record_bytes !== null) {
+          throw new Error('Message update transcript exceeds admission size contract');
+        }
+        const updatedTranscript = this.db
+          .prepare(`
+            UPDATE session_messages
+            SET record_json = ?
+            WHERE session_id = ? AND sequence = ?
+              AND message_id = ? AND message_type = ? AND message_ts = ?
+          `)
+          .run(
+            encodedMessage.json,
+            stored.sessionId,
+            sequence,
+            encodedMessage.message.id,
+            encodedMessage.message.type,
+            encodedMessage.message.ts,
+          );
+        if (updatedTranscript.changes !== 1) {
+          throw new Error('Message update transcript identity conflict');
+        }
+        const latestVisible = this.db
+          .prepare(`
+            SELECT sequence
+            FROM session_messages
+            WHERE session_id = ? AND message_type IN ('user', 'assistant')
+            ORDER BY sequence DESC
+            LIMIT 1
+          `)
+          .get(stored.sessionId) as { sequence?: unknown } | undefined;
+        if (
+          latestVisible &&
+          requireStoredMessageSequence(latestVisible.sequence, stored.sessionId) === sequence
+        ) {
+          this.updateCatalogProjectionSync(
+            stored.sessionId,
+            projectSessionCatalogMessages([encodedMessage.message]),
+            true,
+          );
+        }
+      }
     });
   }
 

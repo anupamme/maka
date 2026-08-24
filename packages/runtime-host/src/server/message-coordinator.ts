@@ -155,10 +155,8 @@ export interface HostMessageRootPort {
     | { readonly kind: 'ready'; readonly content: MessageContent }
     | { readonly kind: 'rejected'; readonly error: string }
   >;
-  commitMessageAdmission(
-    admission: PendingMessageAdmission,
-    materializeTranscript: boolean,
-  ): Promise<PendingMessageAdmission>;
+  commitMessageAdmission(admission: PendingMessageAdmission): Promise<PendingMessageAdmission>;
+  updateMessageAdmission(admission: PendingMessageAdmission): Promise<void>;
   claimStop(
     input: Omit<TurnInterruptInput, 'originHostEpoch' | 'interruptId'>,
     commitQueueFence: () => QueueFenceResult | Promise<QueueFenceResult>,
@@ -936,21 +934,18 @@ export class HostMessageCoordinator implements RuntimeMessageAuthority {
         }
         let durableAdmittedAt: number | undefined;
         if (!durableAdmission) {
-          const admitted = await this.#root.commitMessageAdmission(
-            {
-              sessionId: input.sessionId,
-              turnId: rootState.turnId,
-              runId: rootState.runId,
-              messageId: input.messageId,
-              content: payload.content,
-              modelContent: prepared.content,
-              submittedPlacement: input.placement,
-              placement: input.placement,
-              disposition,
-              admittedAt: Date.now(),
-            },
-            disposition === 'steering',
-          );
+          const admitted = await this.#root.commitMessageAdmission({
+            sessionId: input.sessionId,
+            turnId: rootState.turnId,
+            runId: rootState.runId,
+            messageId: input.messageId,
+            content: payload.content,
+            modelContent: prepared.content,
+            submittedPlacement: input.placement,
+            placement: input.placement,
+            disposition,
+            admittedAt: Date.now(),
+          });
           durableAdmittedAt = admitted.admittedAt;
         }
         const residency = this.#acquireResidency();
@@ -1295,21 +1290,18 @@ export class HostMessageCoordinator implements RuntimeMessageAuthority {
     ) {
       return failure('session_busy', 'Message queue changed during promotion');
     }
-    const pending = await this.#root.commitMessageAdmission(
-      {
-        sessionId: input.sessionId,
-        turnId: rootState.turnId,
-        runId: rootState.runId,
-        messageId: entry.messageId,
-        content: entry.content,
-        modelContent: entry.modelContent,
-        submittedPlacement: entry.submittedPlacement,
-        placement: 'current_turn',
-        disposition: 'steering',
-        admittedAt: entry.durableAdmittedAt ?? Date.now(),
-      },
-      true,
-    );
+    const pending = await this.#root.commitMessageAdmission({
+      sessionId: input.sessionId,
+      turnId: rootState.turnId,
+      runId: rootState.runId,
+      messageId: entry.messageId,
+      content: entry.content,
+      modelContent: entry.modelContent,
+      submittedPlacement: entry.submittedPlacement,
+      placement: 'current_turn',
+      disposition: 'steering',
+      admittedAt: entry.durableAdmittedAt ?? Date.now(),
+    });
     entry.durableAdmittedAt = pending.admittedAt;
     state.followup.splice(index, 1);
     state.steering.push(promotedEntry);
@@ -1408,7 +1400,7 @@ export class HostMessageCoordinator implements RuntimeMessageAuthority {
         'Queued Message update lost its durable admission identity',
       );
     }
-    await this.#receipts.updatePendingMessage({
+    await this.#root.updateMessageAdmission({
       sessionId: input.sessionId,
       turnId: state.reservedRoot.turnId,
       runId: state.reservedRoot.runId,

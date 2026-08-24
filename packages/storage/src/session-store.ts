@@ -32,6 +32,12 @@ import {
 } from './sqlite-session-metadata-store.js';
 import { isDiscardableConversationCopy } from './session-conversation-copy.js';
 import {
+  isVisibleSessionMessage,
+  lastMessagePreviewForMessages,
+  latestVisibleMessageAt,
+  projectSessionCatalogMessages,
+} from './session-catalog-message-projection.js';
+import {
   acquireOperationalStateDatabase,
   OPERATIONAL_STATE_DATABASE_NAME,
 } from './operational-state-store.js';
@@ -310,10 +316,8 @@ export interface SessionAuthorityStore extends SessionStore {
   subscribeTranscriptChanges(listener: (sessionId: string) => void): () => void;
   /** Wait until the SQLite authority is ready for cross-domain transactions. */
   ready(): Promise<void>;
-  commitMessageAdmission(
-    admission: PendingMessageAdmission,
-    transcriptMessage?: StoredMessage,
-  ): Promise<PendingMessageAdmission>;
+  commitMessageAdmission(admission: PendingMessageAdmission): Promise<PendingMessageAdmission>;
+  updateMessageAdmission(admission: PendingMessageAdmission): Promise<void>;
   /** Atomically create a Session from already-converted Maka raw messages. */
   createImportedSession(
     input: CreateSessionInput,
@@ -864,18 +868,21 @@ class SqliteSessionStore implements SessionAuthorityStore {
 
   async commitMessageAdmission(
     admission: PendingMessageAdmission,
-    transcriptMessage?: StoredMessage,
   ): Promise<PendingMessageAdmission> {
     await this.ensureReady();
-    const committed = await this.metadata.commitMessageAdmission(
-      admission,
-      transcriptMessage,
-      transcriptMessage ? projectSessionCatalogMessages([transcriptMessage]) : undefined,
-    );
-    if (transcriptMessage) {
+    const committed = await this.metadata.commitMessageAdmission(admission);
+    if (admission.disposition === 'steering') {
       for (const listener of this.transcriptChangeListeners) listener(admission.sessionId);
     }
     return committed;
+  }
+
+  async updateMessageAdmission(admission: PendingMessageAdmission): Promise<void> {
+    await this.ensureReady();
+    await this.metadata.updateMessageAdmission(admission);
+    if (admission.disposition === 'steering') {
+      for (const listener of this.transcriptChangeListeners) listener(admission.sessionId);
+    }
   }
 
   subscribeTranscriptChanges(listener: (sessionId: string) => void): () => void {
@@ -1381,32 +1388,6 @@ function toCatalogSummary(
   };
 }
 
-export function projectSessionCatalogMessages(messages: readonly StoredMessage[]): {
-  readonly lastMessageAt?: number;
-  readonly lastMessagePreview?: string;
-} {
-  const lastMessageAt = latestVisibleMessageAt(messages);
-  const lastMessagePreview = lastMessagePreviewForMessages(messages);
-  return {
-    ...(lastMessageAt === undefined ? {} : { lastMessageAt }),
-    ...(lastMessagePreview === undefined ? {} : { lastMessagePreview }),
-  };
-}
-
-function latestVisibleMessageAt(messages: readonly StoredMessage[]): number | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]!;
-    if (isVisibleSessionMessage(message)) return message.ts;
-  }
-  return undefined;
-}
-
-function isVisibleSessionMessage(
-  message: StoredMessage,
-): message is Extract<StoredMessage, { type: 'user' | 'assistant' }> {
-  return message.type === 'user' || message.type === 'assistant';
-}
-
 function maxTimestamp(left: number | undefined, right: number | undefined): number | undefined {
   if (left === undefined) return right;
   if (right === undefined) return left;
@@ -1415,34 +1396,6 @@ function maxTimestamp(left: number | undefined, right: number | undefined): numb
 
 function normalizeSessionName(name: string): string {
   return name === 'New Session' ? DEFAULT_SESSION_NAME : name;
-}
-
-function lastMessagePreviewForMessages(messages: readonly StoredMessage[]): string | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]!;
-    if (message.type === 'user') {
-      // Prefer the human-facing view when the stored model text is a composed
-      // envelope (e.g. explicit skill invocation).
-      const text = normalizePreviewText(message.displayText ?? message.text);
-      if (text) return truncatePreview(text);
-      if (message.attachments && message.attachments.length > 0) return '附件';
-    }
-    if (message.type === 'assistant') {
-      const text = normalizePreviewText(message.text);
-      if (text) return truncatePreview(text);
-    }
-  }
-  return undefined;
-}
-
-function normalizePreviewText(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
-}
-
-function truncatePreview(text: string, maxLength = 96): string {
-  const chars = Array.from(text);
-  if (chars.length <= maxLength) return text;
-  return `${chars.slice(0, maxLength - 1).join('')}…`;
 }
 
 export function createUserMessage(input: {
