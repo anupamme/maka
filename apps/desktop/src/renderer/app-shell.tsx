@@ -172,10 +172,6 @@ import {
   createAppShellChatActions,
   type WorkspaceFileReferencePosition,
 } from './app-shell-chat-actions';
-import {
-  retainedAttachmentRefs,
-  toComposerIngestItems,
-} from './composer-attachments';
 import { createAppShellTurnActions } from './app-shell-turn-actions';
 import {
   abandonTurnRevisionCopyAttempt,
@@ -354,6 +350,7 @@ function AppShellContent({
     setMessages,
     addTransientMessage,
     removeTransientMessage,
+    hasTransientMessages,
     transcriptRangeRef,
     messageLoadPending,
     setMessageLoadPending,
@@ -803,6 +800,7 @@ function AppShellContent({
   const activeQuestion = activeInteraction?.type === 'user_question_request' ? activeInteraction : undefined;
   const activeSession = sessions.find((session) => session.id === activeId);
   const activeMessageQueue = activeId ? messageQueueBySession[activeId] : undefined;
+  const activeMessageSubmitting = activeId ? hasTransientMessages(activeId) : false;
   const activeDesktopSession = activeSession;
   // The shell's reading of the active live turn: streaming/settled flags, the
   // in-flight tool signal, and the #646 turn-wait cues, all derived from the
@@ -1757,6 +1755,7 @@ function AppShellContent({
 
   const {
     send,
+    enqueueMessage,
     respondToSandboxBoundary,
     respondToUserQuestion,
     refreshMessages,
@@ -1872,16 +1871,13 @@ function AppShellContent({
   ): Promise<boolean> {
     const pending = pendingAttachments.length > 0 ? pendingAttachments : undefined;
     const quotes = pendingQuotes.length > 0 ? pendingQuotes : undefined;
-    const attachmentItems = pending ? toComposerIngestItems(pending) : [];
-    const retainedAttachments = pending ? retainedAttachmentRefs(pending) : [];
     try {
-      const result = await window.maka.sessions.enqueue(
+      await enqueueMessage(
         sessionId,
+        text,
         mode === 'steer' ? 'current_turn' : 'next_turn',
+        pending,
         {
-          text,
-          ...(attachmentItems.length > 0 ? { attachmentItems } : {}),
-          ...(retainedAttachments.length > 0 ? { retainedAttachments } : {}),
           ...(quotes ? { quotes: [...quotes] } : {}),
           ...(metadata?.workspaceFileReferences?.length
             ? { workspaceFileReferences: [...metadata.workspaceFileReferences] }
@@ -1890,10 +1886,6 @@ function AppShellContent({
       );
       if (pending) clearSubmittedAttachments(pending);
       if (quotes) clearQuotes();
-      if (result.kind === 'started') {
-        await refreshMessages(sessionId);
-        await refreshSessions();
-      }
       return true;
     } catch (error) {
       if (activeIdRef.current === sessionId) {
@@ -2208,6 +2200,7 @@ function AppShellContent({
     setLiveTurnBySession,
     setInteractionBySession,
     setMessageQueueBySession,
+    projectTransientMessage: addTransientMessage,
     displayBatch: sessionDisplayBatch,
     onInteractionChanged: markInteractionChanged,
     onExecutionBoundaryChanged: reloadActiveExecutionBoundary,
@@ -2880,7 +2873,7 @@ function AppShellContent({
                   // #646: in the first-token wait (Stop up, nothing streams yet) the
                   // hint reads "Maka 正在处理…"; in a mid-turn lull it reads the calm
                   // "Maka 继续中…". Both are mutually exclusive with activeStreamingLive.
-                  processing={showProcessingIndicator && !activeStreamingLive}
+                  processing={(showProcessingIndicator || activeMessageSubmitting) && !activeStreamingLive}
                   continuing={showContinuingIndicator && !activeStreamingLive}
                   onSend={sendOwningItsTarget}
                   onStop={stop}
