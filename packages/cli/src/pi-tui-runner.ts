@@ -1139,6 +1139,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
 
     let permissionAlerted = false;
     let optimisticUserEntry: (typeof state.entries)[number] | undefined;
+    let turnPrepared = false;
     const finishTurnUi = () => {
       if (!ownsTurnUi) {
         editor.disableSubmit = false;
@@ -1177,6 +1178,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         // switch resolved (preparePrompt was in flight), and the abandoned
         // Turn's metadata must not overwrite the adopted Session's view.
         if (superseded()) return;
+        turnPrepared = true;
         if (authoritativeAttachedTurn) {
           adoptSessionMetadata(authoritativeAttachedTurn.summary);
           replaceTranscript(authoritativeAttachedTurn.messages, {
@@ -1249,12 +1251,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         // here as "ended without completion" — never report that against the
         // adopted Session.
         if (superseded()) return;
-        if (
-          request.kind === 'external' &&
-          request.turnOrchestration === undefined &&
-          input.driver.submitMessage &&
-          optimisticUserEntry?.kind === 'user'
-        ) {
+        if (request.kind === 'external' && !turnPrepared && optimisticUserEntry?.kind === 'user') {
           removeTransientUserMessage(optimisticUserEntry.messageId);
           optimisticUserEntry = undefined;
         }
