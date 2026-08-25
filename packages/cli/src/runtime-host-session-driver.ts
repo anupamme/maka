@@ -56,6 +56,7 @@ import {
   readRuntimeHostResources,
   readRuntimeHostSessions,
   RuntimeHostOperationError,
+  RuntimeHostRequestInterruptedError,
 } from '@maka/runtime-host/client';
 import {
   InteractionPendingSnapshot,
@@ -79,6 +80,7 @@ import type {
   MakaSideConversationCloseResult,
   MakaSideConversationOpenResult,
   MakaMessageAdmission,
+  MakaRetractedMessages,
   MakaPreparePromptOptions,
   MakaPreparedSessionTurn,
   MakaSessionDriver,
@@ -408,7 +410,10 @@ class RuntimeHostMakaSessionDriverImpl implements RuntimeHostMakaSessionDriver {
         placement: options.placement,
       });
     } catch (error) {
-      if (error instanceof RuntimeHostOperationError && error.code === 'outcome_unknown') {
+      if (
+        (error instanceof RuntimeHostOperationError && error.code === 'outcome_unknown') ||
+        (error instanceof RuntimeHostRequestInterruptedError && error.dispatch === 'dispatched')
+      ) {
         return { messageId: options.messageId, disposition: 'outcome_unknown' };
       }
       throw error;
@@ -416,14 +421,17 @@ class RuntimeHostMakaSessionDriverImpl implements RuntimeHostMakaSessionDriver {
     return { messageId: options.messageId, disposition: result.disposition };
   }
 
-  async retractQueued(): Promise<string> {
-    if (!this.#sessionId) return '';
+  async retractQueued(): Promise<MakaRetractedMessages> {
+    if (!this.#sessionId) return { text: '', messageIds: [] };
     const result = await this.#request('queue.retract', {
       originHostEpoch: this.#connection.hostEpoch,
       sessionId: this.#sessionId,
       retractId: this.#newId(),
     });
-    return result.retracted.map((entry) => entry.content.text).join('\n\n');
+    return {
+      text: result.retracted.map((entry) => entry.content.text).join('\n\n'),
+      messageIds: result.retracted.map((entry) => entry.messageId),
+    };
   }
 
   async respondToSandboxBoundary(response: SandboxBoundaryResponse): Promise<void> {
