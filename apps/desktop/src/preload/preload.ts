@@ -1689,6 +1689,7 @@ const makaBridge = {
     ): Promise<{
       kind: 'queued' | 'started';
       turnId?: string;
+      messageId: string;
       attachments: AttachmentRef[];
       inlineReferences: InlineReference[];
     }> {
@@ -1708,6 +1709,7 @@ const makaBridge = {
       ) as {
         kind: 'queued' | 'started';
         turnId?: string;
+        messageId: string;
         attachments: AttachmentRef[];
         inlineReferences: InlineReference[];
       };
