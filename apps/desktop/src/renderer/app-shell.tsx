@@ -2201,6 +2201,7 @@ function AppShellContent({
     setInteractionBySession,
     setMessageQueueBySession,
     projectTransientMessage: addTransientMessage,
+    removeTransientMessage,
     displayBatch: sessionDisplayBatch,
     onInteractionChanged: markInteractionChanged,
     onExecutionBoundaryChanged: reloadActiveExecutionBoundary,
