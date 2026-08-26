@@ -6833,7 +6833,7 @@ class SteeringTurnDriver implements MakaSessionDriver {
           summary: fakeSessionSummary(turn.sessionId),
         }),
       );
-      return { messageId: options.messageId, disposition: 'turn_started' as const };
+      return;
     }
     if (options.placement === 'current_turn') {
       this.steered.push(text);
@@ -6843,11 +6843,6 @@ class SteeringTurnDriver implements MakaSessionDriver {
       this.followup.push({ messageId: options.messageId, text });
     }
     this.emitQueueUpdate();
-    return {
-      messageId: options.messageId,
-      disposition:
-        options.placement === 'current_turn' ? ('steering' as const) : ('followup' as const),
-    };
   }
 
   subscribeStartedTurns(listener: (turn: MakaAttachedSessionTurn) => void): () => void {

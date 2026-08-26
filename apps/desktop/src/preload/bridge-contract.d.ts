@@ -804,7 +804,6 @@ export interface MakaBridge {
       | {
           ok: true;
           disposition: 'turn_started' | 'steering' | 'followup';
-          messageId: string;
           turnId?: string;
           attachments: import('@maka/core/events').AttachmentRef[];
           inlineReferences: import('@maka/core/events').InlineReference[];
@@ -818,7 +817,6 @@ export interface MakaBridge {
       | {
           ok: false;
           reason: 'outcome_unknown';
-          messageId: string;
           skillInvocation: import('@maka/runtime/skill-invocation').SkillInvocationResult;
         }
     >;
@@ -909,12 +907,15 @@ export interface MakaBridge {
       | {
           kind: 'queued' | 'started';
           turnId?: string;
-          messageId: string;
           attachments: import('@maka/core/events').AttachmentRef[];
           inlineReferences: import('@maka/core/events').InlineReference[];
         }
-      | { kind: 'outcome_unknown'; messageId: string }
+      | { kind: 'outcome_unknown' }
     >;
+    queryMessageStatuses(
+      sessionId: string,
+      messageIds: readonly string[],
+    ): Promise<import('@maka/runtime-host/protocol').TurnMessageQueryResult>;
     retractQueueEntry(sessionId: string, entryId: string): Promise<void>;
     promoteQueueEntry(sessionId: string, entryId: string): Promise<void>;
     updateQueueEntry(

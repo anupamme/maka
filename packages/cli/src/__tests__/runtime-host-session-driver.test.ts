@@ -1104,13 +1104,10 @@ describe('Runtime Host Maka Session driver', () => {
     });
     await driver.switchSession('session-1');
 
-    assert.deepEqual(
-      await driver.submitMessage!('Later', {
-        messageId: 'message-1',
-        placement: 'next_turn',
-      }),
-      { messageId: 'message-1', disposition: 'followup' },
-    );
+    await driver.submitMessage!('Later', {
+      messageId: 'message-1',
+      placement: 'next_turn',
+    });
     assert.deepEqual(await driver.retractQueued!(), {
       text: 'Later',
       messageIds: ['message-1'],
@@ -1155,15 +1152,10 @@ describe('Runtime Host Maka Session driver', () => {
     });
     await driver.switchSession('session-1');
 
-    const admission = await driver.submitMessage!('Visible prompt', {
+    await driver.submitMessage!('Visible prompt', {
       messageId: 'message-1',
       placement: 'current_turn',
       modelText: 'Expanded prompt',
-    });
-
-    assert.deepEqual(admission, {
-      messageId: 'message-1',
-      disposition: 'steering',
     });
     assert.deepEqual(connection.requests.at(-1), {
       operation: 'turn.message.submit',
@@ -1195,12 +1187,11 @@ describe('Runtime Host Maka Session driver', () => {
     });
     await driver.switchSession('session-1');
 
-    assert.deepEqual(
-      await driver.submitMessage!('Keep this visible', {
+    await assert.doesNotReject(() =>
+      driver.submitMessage!('Keep this visible', {
         messageId: 'message-unknown',
         placement: 'current_turn',
       }),
-      { messageId: 'message-unknown', disposition: 'outcome_unknown' },
     );
   });
 
@@ -1223,12 +1214,11 @@ describe('Runtime Host Maka Session driver', () => {
     });
     await driver.switchSession('session-1');
 
-    assert.deepEqual(
-      await driver.submitMessage!('Keep this visible', {
+    await assert.doesNotReject(() =>
+      driver.submitMessage!('Keep this visible', {
         messageId: 'message-interrupted',
         placement: 'current_turn',
       }),
-      { messageId: 'message-interrupted', disposition: 'outcome_unknown' },
     );
   });
 
